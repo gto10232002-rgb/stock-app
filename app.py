@@ -4,11 +4,13 @@ import requests
 import datetime
 import time
 
+# 設定頁面寬度與佈局
 st.set_page_config(page_title="台股籌碼選股器", layout="wide")
 st.markdown("### 📊 台股籌碼選股")
 
 @st.cache_data(ttl=3600)
 def get_stock_data():
+    # 簡化資料下載邏輯
     twse_price_url = "https://openapi.twse.com.tw/v1/exchangeReport/STOCK_DAY_ALL"
     res_price = requests.get(twse_price_url, timeout=20)
     df_price_clean = pd.DataFrame()
@@ -19,6 +21,7 @@ def get_stock_data():
         df_price['vol'] = pd.to_numeric(df_price['TradeVolume'].str.replace(',', ''), errors='coerce') / 1000
         df_price_clean = df_price[['Code', 'Name', 'price', 'vol']].rename(columns={'Code': 'code', 'Name': 'name'})
 
+    # 籌碼資料邏輯
     df_chips_clean = pd.DataFrame()
     headers = {'User-Agent': 'Mozilla/5.0'}
     for i in range(7):
@@ -46,35 +49,31 @@ def get_stock_data():
 
 try:
     df = get_stock_data()
-    st.sidebar.header("篩選條件")
-    min_p = st.sidebar.number_input("最低股價", value=0.0)
-    max_p = st.sidebar.number_input("最高股價", value=100.0)
+    # 側邊欄篩選
+    min_p, max_p = st.sidebar.number_input("最低股價", value=0.0), st.sidebar.number_input("最高股價", value=100.0)
     min_v = st.sidebar.number_input("最低成交量(張)", value=1000)
     min_c = st.sidebar.slider("最低籌碼集中度(%)", -50, 50, 5)
     
-    # 篩選數據
     res = df[(df['price']>=min_p) & (df['price']<=max_p) & (df['vol']>=min_v) & (df['chip_ratio']>=min_c)].copy()
     res = res.sort_values(by='chip_ratio', ascending=False)
     
-    # 欄位格式化 (確保數值已四捨五入到小數點後兩位)
+    # 整合「個股資訊」欄位：合併代號與名稱，並加上 Yahoo 連結
+    res['個股資訊'] = res.apply(lambda x: f"[{x['code']} {x['name']}](https://tw.stock.yahoo.com/quote/{x['code']})", axis=1)
     res['股價'] = res['price'].round(2)
     res['集中度%'] = res['chip_ratio']
-    res['K線'] = res['code'].apply(lambda x: "https://tw.stock.yahoo.com/quote/" + x)
     
-    # 整理顯示欄位
-    display_df = res.rename(columns={'code':'代號', 'name':'名稱'})[['代號', '名稱', '股價', '集中度%', 'K線']]
+    st.write(f"📈 符合條件：{len(res)} 檔")
     
-    st.write(f"📈 符合條件：{len(display_df)} 檔")
-    
-    # 使用 dataframe 顯示並啟用自動寬度，這能填滿版面
+    # 使用 st.dataframe 的 markdown 渲染功能，將超連結整合進表格
     st.dataframe(
-        display_df,
+        res[['個股資訊', '股價', '集中度%']],
         column_config={
-            "K線": st.column_config.LinkColumn("個股資訊", display_text="📈查看"),
+            "個股資訊": st.column_config.TextColumn("代號/名稱 (點擊看K線)", help="點擊可前往Yahoo股市"),
+            "股價": st.column_config.NumberColumn(format="%.2f"),
+            "集中度%": st.column_config.NumberColumn(format="%.2f%%")
         },
         use_container_width=True,
         hide_index=True
     )
 
 except Exception as e:
-    st.error(f"執行錯誤: {e}")
