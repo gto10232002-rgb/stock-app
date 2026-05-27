@@ -59,4 +59,15 @@ try:
              (df['vol'] >= min_v) & (df['chip_ratio'] >= min_c)].copy()
     res = res.sort_values(by='chip_ratio', ascending=False)
     
-    # 關鍵合併：將
+    # 關鍵合併：將代號、名稱與連結組合成 LinkColumn 格式
+    # URL 格式: https://tw.stock.yahoo.com/quote/代號
+    res['個股資訊'] = "https://tw.stock.yahoo.com/quote/" + res['code'] + " " + res['code'] + " " + res['name']
+    
+    display_df = res[['個股資訊', 'price', 'chip_ratio']].rename(
+        columns={'price': '股價', 'chip_ratio': '集中度%'}
+    )
+    
+    st.write("📈 符合條件：" + str(len(display_df)) + " 檔")
+    
+    # 顯示表格
+    st.dataframe(
