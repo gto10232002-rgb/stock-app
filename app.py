@@ -71,31 +71,3 @@ try:
         (df['收盤價'] <= max_price) & 
         (df['當日成交量(張)'] >= min_vol) & 
         (df['籌碼集中度(%)'] >= min_chip)
-    ].copy()
-    
-    sort_by = st.sidebar.selectbox("排序基準", ["籌碼集中度(%)", "當日成交量(張)"])
-    filtered_df = filtered_df.sort_values(by=sort_by, ascending=False)
-    
-    # 顯示區塊
-    st.write(f"📈 符合條件：{len(filtered_df)} 檔")
-    
-    # 建立 K 線連結
-    filtered_df['K線'] = filtered_df['股票代碼'].apply(lambda x: f"[📈看K線](https://tw.stock.yahoo.com/quote/{x})")
-    
-    # 精簡欄位名稱
-    table_df = filtered_df.rename(columns={
-        '股票代碼': '代號',
-        '股票名稱': '名稱',
-        '收盤價': '股價',
-        '籌碼集中度(%)': '集中度%'
-    })
-    
-    # 選擇欄位並設「代號」為索引以隱藏原本的預設索引欄
-    display_table = table_df[['代號', '名稱', '股價', '集中度%', 'K線']].head(30)
-    display_table = display_table.set_index('代號')
-    
-    # 顯示表格
-    st.table(display_table)
-
-except Exception as e:
-    st.error(f"程式執行錯誤: {e}")
