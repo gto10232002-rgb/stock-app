@@ -9,7 +9,6 @@ st.markdown("### 📊 台股籌碼選股")
 
 @st.cache_data(ttl=3600)
 def get_stock_data():
-    # 1. 股價資料
     twse_price_url = "https://openapi.twse.com.tw/v1/exchangeReport/STOCK_DAY_ALL"
     res_price = requests.get(twse_price_url, timeout=20)
     df_price_clean = pd.DataFrame()
@@ -20,7 +19,6 @@ def get_stock_data():
         df_price['vol'] = pd.to_numeric(df_price['TradeVolume'].str.replace(',', ''), errors='coerce') / 1000
         df_price_clean = df_price[['Code', 'Name', 'price', 'vol']].rename(columns={'Code': 'code', 'Name': 'name'})
 
-    # 2. 籌碼資料
     df_chips_clean = pd.DataFrame()
     headers = {'User-Agent': 'Mozilla/5.0'}
     for i in range(7):
@@ -43,7 +41,7 @@ def get_stock_data():
         time.sleep(1)
 
     df = pd.merge(df_price_clean, df_chips_clean, on='code', how='inner')
-    df['chip_ratio'] = (df['fi'] + df['it']) / df['vol'] * 100
+    df['chip_ratio'] = ((df['fi'] + df['it']) / df['vol'] * 100).round(2)
     return df
 
 try:
@@ -54,23 +52,29 @@ try:
     min_v = st.sidebar.number_input("最低成交量(張)", value=1000)
     min_c = st.sidebar.slider("最低籌碼集中度(%)", -50, 50, 5)
     
-    # 篩選
+    # 篩選數據
     res = df[(df['price']>=min_p) & (df['price']<=max_p) & (df['vol']>=min_v) & (df['chip_ratio']>=min_c)].copy()
     res = res.sort_values(by='chip_ratio', ascending=False)
     
-    # 格式化顯示用 DataFrame
-    display_df = res.copy()
-    display_df['股價'] = display_df['price'].map('{:.2f}'.format)
-    display_df['集中度%'] = display_df['chip_ratio'].map('{:.2f}'.format)
+    # 欄位格式化 (確保數值已四捨五入到小數點後兩位)
+    res['股價'] = res['price'].round(2)
+    res['集中度%'] = res['chip_ratio']
+    res['K線'] = res['code'].apply(lambda x: "https://tw.stock.yahoo.com/quote/" + x)
     
-    # K線連結 (使用 HTML 顯示圖示)
-    display_df['K線'] = display_df['code'].apply(lambda x: f'<a href="https://tw.stock.yahoo.com/quote/{x}" target="_blank">📈看K線</a>')
+    # 整理顯示欄位
+    display_df = res.rename(columns={'code':'代號', 'name':'名稱'})[['代號', '名稱', '股價', '集中度%', 'K線']]
     
     st.write(f"📈 符合條件：{len(display_df)} 檔")
     
-    # 最終呈現
-    final_table = display_df.rename(columns={'code':'代號', 'name':'名稱'})[['代號', '名稱', '股價', '集中度%', 'K線']]
-    st.write(final_table.to_html(escape=False, index=False), unsafe_allow_html=True)
+    # 使用 dataframe 顯示並啟用自動寬度，這能填滿版面
+    st.dataframe(
+        display_df,
+        column_config={
+            "K線": st.column_config.LinkColumn("個股資訊", display_text="📈查看"),
+        },
+        use_container_width=True,
+        hide_index=True
+    )
 
 except Exception as e:
     st.error(f"執行錯誤: {e}")
