@@ -66,14 +66,4 @@ try:
     min_chip = st.sidebar.slider("最低籌碼集中度 (%)", -50, 50, 5)
     
     filtered_df = df[(df['收盤價'] >= min_price) & (df['收盤價'] <= max_price) & 
-                     (df['當日成交量(張)'] >= min_vol) & (df['籌碼集中度(%)'] >= min_chip)]
-    
-    sort_by = st.sidebar.selectbox("排序基準", ["籌碼集中度(%)", "當日成交量(張)", "外資買超(張)", "投信買超(張)"])
-    filtered_df = filtered_df.sort_values(by=sort_by, ascending=False)
-    
-    # 顯示優化
-    st.write(f"📈 符合條件：{len(filtered_df)} 檔")
-    
-    # 建立 K 線連結
-    display_df = filtered_df.copy()
-    display_df['K線連結'] = display_df['
+                     (df['當日成交量(張)'] >= min_vol) & (df['籌碼集中度(%)']
