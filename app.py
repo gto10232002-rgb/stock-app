@@ -65,9 +65,4 @@ try:
     min_vol = st.sidebar.number_input("最低成交量 (張)", value=1000)
     min_chip = st.sidebar.slider("最低籌碼集中度 (%)", -50, 50, 5)
     
-    # 篩選邏輯
-    filtered_df = df[
-        (df['收盤價'] >= min_price) & 
-        (df['收盤價'] <= max_price) & 
-        (df['當日成交量(張)'] >= min_vol) & 
-        (df['籌碼集中度(%)'] >= min_chip)
+    # 修正後的
