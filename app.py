@@ -4,11 +4,12 @@ import requests
 import datetime
 import time
 
-st.set_page_config(page_title="StockTool", layout="wide")
+st.set_page_config(page_title="台股籌碼選股器", layout="wide")
 st.markdown("### 📊 台股籌碼選股")
 
 @st.cache_data(ttl=3600)
 def get_stock_data():
+    # 1. 股價資料
     twse_price_url = "https://openapi.twse.com.tw/v1/exchangeReport/STOCK_DAY_ALL"
     res_price = requests.get(twse_price_url, timeout=20)
     df_price_clean = pd.DataFrame()
@@ -19,6 +20,7 @@ def get_stock_data():
         df_price['vol'] = pd.to_numeric(df_price['TradeVolume'].str.replace(',', ''), errors='coerce') / 1000
         df_price_clean = df_price[['Code', 'Name', 'price', 'vol']].rename(columns={'Code': 'code', 'Name': 'name'})
 
+    # 2. 籌碼資料
     df_chips_clean = pd.DataFrame()
     headers = {'User-Agent': 'Mozilla/5.0'}
     for i in range(7):
@@ -41,25 +43,34 @@ def get_stock_data():
         time.sleep(1)
 
     df = pd.merge(df_price_clean, df_chips_clean, on='code', how='inner')
-    df['chip_ratio'] = ((df['fi'] + df['it']) / df['vol'] * 100).round(2)
+    df['chip_ratio'] = (df['fi'] + df['it']) / df['vol'] * 100
     return df
 
 try:
     df = get_stock_data()
-    st.sidebar.header("Filter")
-    min_p = st.sidebar.number_input("Min Price", value=0.0)
-    max_p = st.sidebar.number_input("Max Price", value=100.0)
-    min_v = st.sidebar.number_input("Min Vol", value=1000)
-    min_c = st.sidebar.slider("Min Ratio", -50, 50, 5)
+    st.sidebar.header("篩選條件")
+    min_p = st.sidebar.number_input("最低股價", value=0.0)
+    max_p = st.sidebar.number_input("最高股價", value=100.0)
+    min_v = st.sidebar.number_input("最低成交量(張)", value=1000)
+    min_c = st.sidebar.slider("最低籌碼集中度(%)", -50, 50, 5)
     
+    # 篩選
     res = df[(df['price']>=min_p) & (df['price']<=max_p) & (df['vol']>=min_v) & (df['chip_ratio']>=min_c)].copy()
     res = res.sort_values(by='chip_ratio', ascending=False)
     
-    res['price'] = res['price'].round(2)
-    res['K'] = res['code'].apply(lambda x: "https://tw.stock.yahoo.com/quote/" + x)
+    # 格式化顯示用 DataFrame
+    display_df = res.copy()
+    display_df['股價'] = display_df['price'].map('{:.2f}'.format)
+    display_df['集中度%'] = display_df['chip_ratio'].map('{:.2f}'.format)
     
-    st.write("符合筆數: " + str(len(res)))
-    st.table(res.rename(columns={'code':'代號', 'name':'名稱', 'price':'股價', 'chip_ratio':'集中度%'})[['代號', '名稱', '股價', '集中度%', 'K']])
+    # K線連結 (使用 HTML 顯示圖示)
+    display_df['K線'] = display_df['code'].apply(lambda x: f'<a href="https://tw.stock.yahoo.com/quote/{x}" target="_blank">📈看K線</a>')
+    
+    st.write(f"📈 符合條件：{len(display_df)} 檔")
+    
+    # 最終呈現
+    final_table = display_df.rename(columns={'code':'代號', 'name':'名稱'})[['代號', '名稱', '股價', '集中度%', 'K線']]
+    st.write(final_table.to_html(escape=False, index=False), unsafe_allow_html=True)
 
 except Exception as e:
-    st.write(e)
+    st.error(f"執行錯誤: {e}")
