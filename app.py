@@ -65,7 +65,7 @@ try:
     min_vol = st.sidebar.number_input("最低成交量 (張)", value=1000)
     min_chip = st.sidebar.slider("最低籌碼集中度 (%)", -50, 50, 5)
     
-    # 正確的篩選邏輯
+    # 篩選邏輯
     filtered_df = df[
         (df['收盤價'] >= min_price) & 
         (df['收盤價'] <= max_price) & 
@@ -82,7 +82,7 @@ try:
     # 建立 K 線連結
     filtered_df['K線'] = filtered_df['股票代碼'].apply(lambda x: f"[📈看K線](https://tw.stock.yahoo.com/quote/{x})")
     
-    # 精簡表格
+    # 精簡欄位名稱
     table_df = filtered_df.rename(columns={
         '股票代碼': '代號',
         '股票名稱': '名稱',
@@ -90,8 +90,12 @@ try:
         '籌碼集中度(%)': '集中度%'
     })
     
-    # 顯示靜態表格
-    st.table(table_df[['代號', '名稱', '股價', '集中度%', 'K線']].head(30))
+    # 選擇欄位並設「代號」為索引以隱藏原本的預設索引欄
+    display_table = table_df[['代號', '名稱', '股價', '集中度%', 'K線']].head(30)
+    display_table = display_table.set_index('代號')
+    
+    # 顯示表格
+    st.table(display_table)
 
 except Exception as e:
-    st.error(f"程式執行錯誤，請檢查篩選設定: {e}")
+    st.error(f"程式執行錯誤: {e}")
