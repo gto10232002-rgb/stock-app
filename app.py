@@ -10,7 +10,7 @@ st.markdown("### 📊 台股籌碼選股")
 
 @st.cache_data(ttl=3600)
 def get_stock_data():
-    # 下載股價資料
+    # 股價與籌碼下載邏輯
     url_price = "https://openapi.twse.com.tw/v1/exchangeReport/STOCK_DAY_ALL"
     res_price = requests.get(url_price, timeout=20)
     df_price = pd.DataFrame()
@@ -21,7 +21,6 @@ def get_stock_data():
         df_price['vol'] = pd.to_numeric(df_price['TradeVolume'].str.replace(',', ''), errors='coerce') / 1000
         df_price = df_price[['Code', 'Name', 'price', 'vol']].rename(columns={'Code': 'code', 'Name': 'name'})
 
-    # 下載籌碼資料
     df_chips = pd.DataFrame()
     headers = {'User-Agent': 'Mozilla/5.0'}
     for i in range(7):
@@ -45,7 +44,7 @@ def get_stock_data():
     df['chip_ratio'] = ((df['fi'] + df['it']) / df['vol'] * 100).round(2)
     return df
 
-# 主程式邏輯
+# 執行區塊：確保縮排嚴謹
 try:
     df = get_stock_data()
     st.sidebar.header("篩選條件")
@@ -54,31 +53,30 @@ try:
     min_v = st.sidebar.number_input("最低成交量(張)", value=1000)
     min_c = st.sidebar.slider("最低籌碼集中度(%)", -50, 50, 5)
     
-    # 執行篩選
+    # 篩選邏輯
     res = df[(df['price'] >= min_p) & (df['price'] <= max_p) & 
              (df['vol'] >= min_v) & (df['chip_ratio'] >= min_c)].copy()
     res = res.sort_values(by='chip_ratio', ascending=False)
     
-    # 建立合併欄位 (URL + 代號 + 名稱)
+    # 合併資訊為連結欄位 (Yahoo URL + 代號 + 名稱)
     res['個股資訊'] = "https://tw.stock.yahoo.com/quote/" + res['code'] + " " + res['code'] + " " + res['name']
     
-    # 只取需要顯示的欄位
     display_df = res[['個股資訊', 'price', 'chip_ratio']].rename(
         columns={'price': '股價', 'chip_ratio': '集中度%'}
     )
     
     st.write("📈 符合條件：" + str(len(display_df)) + " 檔")
     
-    # 顯示表格 (使用 LinkColumn 並隱藏 URL)
+    # 顯示表格，配置 LinkColumn
     st.dataframe(
         display_df,
         column_config={
             "個股資訊": st.column_config.LinkColumn(
                 "代號/名稱", 
-                help="點擊前往 Yahoo 股市查看 K 線",
+                help="點擊前往 Yahoo 股市",
                 display_text=r"(.*) (.*)"
             ),
             "股價": st.column_config.NumberColumn(format="%.2f"),
             "集中度%": st.column_config.NumberColumn(format="%.2f")
         },
-        use_container_width=
+        use_container_width=True
