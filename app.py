@@ -43,7 +43,7 @@ def get_stock_data():
     df['chip_ratio'] = ((df['fi'] + df['it']) / df['vol'] * 100).round(2)
     return df
 
-# 主邏輯區塊
+# 主執行區塊
 try:
     df = get_stock_data()
     st.sidebar.header("篩選條件")
@@ -56,20 +56,20 @@ try:
              (df['vol'] >= min_v) & (df['chip_ratio'] >= min_c)].copy()
     res = res.sort_values(by='chip_ratio', ascending=False)
     
-    # 將代號名稱整合為連結欄位
-    res['代號/名稱'] = "https://tw.stock.yahoo.com/quote/" + res['code'] + " " + res['code'] + " " + res['name']
+    # 建立合併欄位：網址 + 空格 + 代號 + 空格 + 名稱
+    res['個股連結'] = "https://tw.stock.yahoo.com/quote/" + res['code'] + " " + res['code'] + " " + res['name']
     
-    display_df = res[['代號/名稱', 'price', 'chip_ratio']].rename(
+    display_df = res[['個股連結', 'price', 'chip_ratio']].rename(
         columns={'price': '股價', 'chip_ratio': '集中度%'}
     )
     
     st.write("📈 符合條件：" + str(len(display_df)) + " 檔")
     
-    # 使用 LinkColumn 與 Regex 處理顯示文字與連結的分離
+    # 關鍵修正：透過 Regex 隱藏網址，僅顯示代號名稱
     st.dataframe(
         display_df,
         column_config={
-            "代號/名稱": st.column_config.LinkColumn(
+            "個股連結": st.column_config.LinkColumn(
                 "代號/名稱", 
                 help="點擊前往 Yahoo 股市",
                 display_text=r"https://tw\.stock\.yahoo\.com/quote/\d+ (.*)"
@@ -81,4 +81,4 @@ try:
         hide_index=True
     )
 except Exception as e:
-    st.error(f"系統發生錯誤: {e}")
+    st.error(f"系統執行錯誤: {e}")
