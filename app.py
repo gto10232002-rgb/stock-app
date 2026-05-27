@@ -4,23 +4,24 @@ import requests
 import datetime
 import time
 
-# 頁面配置
 st.set_page_config(page_title="台股籌碼選股器", layout="wide")
 st.markdown("### 📊 台股籌碼選股")
 
 @st.cache_data(ttl=3600)
 def get_stock_data():
-    url_price = "https://openapi.twse.com.tw/v1/exchangeReport/STOCK_DAY_ALL"
-    res_price = requests.get(url_price, timeout=20)
-    df_price = pd.DataFrame()
+    # 1. 股價資料
+    twse_price_url = "https://openapi.twse.com.tw/v1/exchangeReport/STOCK_DAY_ALL"
+    res_price = requests.get(twse_price_url, timeout=20)
+    df_price_clean = pd.DataFrame()
     if res_price.status_code == 200:
-        raw_price = pd.DataFrame(res_price.json())
-        df_price = raw_price[raw_price['Code'].str.len() == 4].copy()
+        df_price = pd.DataFrame(res_price.json())
+        df_price = df_price[df_price['Code'].str.len() == 4].copy()
         df_price['price'] = pd.to_numeric(df_price['ClosingPrice'].str.replace(',', ''), errors='coerce')
         df_price['vol'] = pd.to_numeric(df_price['TradeVolume'].str.replace(',', ''), errors='coerce') / 1000
-        df_price = df_price[['Code', 'Name', 'price', 'vol']].rename(columns={'Code': 'code', 'Name': 'name'})
+        df_price_clean = df_price[['Code', 'Name', 'price', 'vol']].rename(columns={'Code': 'code', 'Name': 'name'})
 
-    df_chips = pd.DataFrame()
+    # 2. 籌碼資料
+    df_chips_clean = pd.DataFrame()
     headers = {'User-Agent': 'Mozilla/5.0'}
     for i in range(7):
         date_str = (datetime.datetime.now() - datetime.timedelta(days=i)).strftime("%Y%m%d")
@@ -31,19 +32,20 @@ def get_stock_data():
             fields = res.json()["fields"]
             df_raw = pd.DataFrame(data, columns=fields)
             df_raw.columns = df_raw.columns.str.strip()
+            code_col = '證券代號'
             fi_col = [c for c in df_raw.columns if '外資' in c and '買賣超股數' in c][0]
             it_col = [c for c in df_raw.columns if '投信' in c and '買賣超股數' in c][0]
-            df_chips['code'] = df_raw['證券代號'].astype(str).str.strip()
-            df_chips['fi'] = pd.to_numeric(df_raw[fi_col].str.replace(',', ''), errors='coerce') / 1000
-            df_chips['it'] = pd.to_numeric(df_raw[it_col].str.replace(',', ''), errors='coerce') / 1000
+            df_chips_clean = pd.DataFrame()
+            df_chips_clean['code'] = df_raw[code_col].astype(str).str.strip()
+            df_chips_clean['fi'] = pd.to_numeric(df_raw[fi_col].str.replace(',', ''), errors='coerce') / 1000
+            df_chips_clean['it'] = pd.to_numeric(df_raw[it_col].str.replace(',', ''), errors='coerce') / 1000
             break
-        time.sleep(0.5)
+        time.sleep(1)
 
-    df = pd.merge(df_price, df_chips, on='code', how='inner')
-    df['chip_ratio'] = ((df['fi'] + df['it']) / df['vol'] * 100).round(2)
+    df = pd.merge(df_price_clean, df_chips_clean, on='code', how='inner')
+    df['chip_ratio'] = (df['fi'] + df['it']) / df['vol'] * 100
     return df
 
-# 主執行區塊
 try:
     df = get_stock_data()
     st.sidebar.header("篩選條件")
@@ -52,33 +54,23 @@ try:
     min_v = st.sidebar.number_input("最低成交量(張)", value=1000)
     min_c = st.sidebar.slider("最低籌碼集中度(%)", -50, 50, 5)
     
-    res = df[(df['price'] >= min_p) & (df['price'] <= max_p) & 
-             (df['vol'] >= min_v) & (df['chip_ratio'] >= min_c)].copy()
+    # 篩選
+    res = df[(df['price']>=min_p) & (df['price']<=max_p) & (df['vol']>=min_v) & (df['chip_ratio']>=min_c)].copy()
     res = res.sort_values(by='chip_ratio', ascending=False)
     
-    # 建立合併欄位：網址 + 空格 + 代號 + 空格 + 名稱
-    res['個股連結'] = "https://tw.stock.yahoo.com/quote/" + res['code'] + " " + res['code'] + " " + res['name']
+    # 格式化顯示用 DataFrame
+    display_df = res.copy()
+    display_df['股價'] = display_df['price'].map('{:.2f}'.format)
+    display_df['集中度%'] = display_df['chip_ratio'].map('{:.2f}'.format)
     
-    display_df = res[['個股連結', 'price', 'chip_ratio']].rename(
-        columns={'price': '股價', 'chip_ratio': '集中度%'}
-    )
+    # K線連結 (使用 HTML 顯示圖示)
+    display_df['K線'] = display_df['code'].apply(lambda x: f'<a href="https://tw.stock.yahoo.com/quote/{x}" target="_blank">📈看K線</a>')
     
-    st.write("📈 符合條件：" + str(len(display_df)) + " 檔")
+    st.write(f"📈 符合條件：{len(display_df)} 檔")
     
-    # 關鍵修正：透過 Regex 隱藏網址，僅顯示代號名稱
-    st.dataframe(
-        display_df,
-        column_config={
-            "個股連結": st.column_config.LinkColumn(
-                "代號/名稱", 
-                help="點擊前往 Yahoo 股市",
-                display_text=r"https://tw\.stock\.yahoo\.com/quote/\d+ (.*)"
-            ),
-            "股價": st.column_config.NumberColumn(format="%.2f"),
-            "集中度%": st.column_config.NumberColumn(format="%.2f")
-        },
-        use_container_width=True,
-        hide_index=True
-    )
+    # 最終呈現
+    final_table = display_df.rename(columns={'code':'代號', 'name':'名稱'})[['代號', '名稱', '股價', '集中度%', 'K線']]
+    st.write(final_table.to_html(escape=False, index=False), unsafe_allow_html=True)
+
 except Exception as e:
-    st.error(f"系統執行錯誤: {e}")
+    st.error(f"執行錯誤: {e}")
