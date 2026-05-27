@@ -69,23 +69,24 @@ try:
     sort_by = st.sidebar.selectbox("排序基準", ["籌碼集中度(%)", "當日成交量(張)", "外資買超(張)", "投信買超(張)"])
     filtered_df = filtered_df.sort_values(by=sort_by, ascending=False)
     
-    # 手機版優化顯示
+    # 顯示優化
     st.write(f"📊 共 {len(filtered_df)} 檔股票符合條件")
     
+    # 建立 K 線連結欄位
     display_df = filtered_df.copy()
-    display_df['K線圖'] = display_df['股票代碼'].apply(lambda x: f"https://tw.stock.yahoo.com/quote/{x}")
+    display_df['K線'] = display_df['股票代碼'].apply(lambda x: f"https://tw.stock.yahoo.com/quote/{x}")
     
-    st.dataframe(
-        display_df,
-        use_container_width=True, 
-        column_config={
-            "股票代碼": st.column_config.Column(width="small"),
-            "股票名稱": st.column_config.Column(width="medium"),
-            "籌碼集中度(%)": st.column_config.NumberColumn(format="%.2f%%"),
-            "K線圖": st.column_config.LinkColumn("查看", display_text="📈 K線")
-        },
-        hide_index=True
-    )
+    # 篩選要在手機上顯示的欄位，強制使用 st.table 以適應手機寬度
+    cols_to_show = ['股票代碼', '股票名稱', '收盤價', '籌碼集中度(%)', 'K線']
+    
+    # 轉換顯示：將 URL 轉為簡單的文字連結，確保 table 顯示美觀
+    table_df = display_df[cols_to_show].copy()
+    
+    # 使用 Markdown 語法產生連結，在 st.table 中顯示會更乾淨
+    table_df['K線'] = table_df.apply(lambda row: f"[📈看K線]({row['K線']})", axis=1)
+    
+    # 顯示靜態表格
+    st.table(table_df.head(30)) 
 
 except Exception as e:
     st.error(f"資料讀取錯誤: {e}")
