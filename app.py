@@ -4,10 +4,10 @@ import requests
 import datetime
 import time
 
-# 頁面設定：設定為 wide 模式讓表格更靈活
+# 頁面設定
 st.set_page_config(page_title="台股籌碼選股器", layout="wide")
 
-# 手機版優化：改用 markdown 縮小標題，節省頂部空間
+# 手機版優化：縮小標題
 st.markdown("### 📊 台股籌碼選股")
 
 # 數據獲取函式
@@ -59,7 +59,6 @@ def get_stock_data():
 try:
     df = get_stock_data()
     
-    # 側邊欄：手機版預設會被摺疊，不影響閱讀
     st.sidebar.header("🔍 篩選條件")
     min_price = st.sidebar.number_input("最低股價", value=0.0)
     max_price = st.sidebar.number_input("最高股價", value=100.0)
@@ -75,17 +74,6 @@ try:
     # 顯示優化
     st.write(f"📈 符合條件：{len(filtered_df)} 檔")
     
-    # 處理 K 線連結
+    # 建立 K 線連結
     display_df = filtered_df.copy()
-    display_df['K線連結'] = display_df['股票代碼'].apply(lambda x: f"https://tw.stock.yahoo.com/quote/{x}")
-    
-    # 手機版極簡表格，使用 st.table 避免溢出
-    cols_to_show = ['股票代碼', '股票名稱', '收盤價', '籌碼集中度(%)', 'K線連結']
-    table_df = display_df[cols_to_show].copy()
-    table_df['K線連結'] = table_df.apply(lambda row: f"[📈看K線]({row['K線連結']})", axis=1)
-    
-    # 顯示前 30 筆，確保手機載入速度與閱讀清晰度
-    st.table(table_df.head(30)) 
-
-except Exception as e:
-    st.error(f"資料讀取錯誤: {e}")
+    display_df['K線連結'] = display_df['
