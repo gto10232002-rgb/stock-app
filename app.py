@@ -8,7 +8,7 @@ import time
 st.set_page_config(page_title="台股籌碼選股器", layout="wide")
 st.title("📊 台股籌碼選股工具")
 
-# 數據獲取函式 (快取機制，避免頻繁請求證交所)
+# 數據獲取函式
 @st.cache_data(ttl=3600)
 def get_stock_data():
     # 1. 下載股價
@@ -22,7 +22,7 @@ def get_stock_data():
         df_price['當日成交量(張)'] = pd.to_numeric(df_price['TradeVolume'].str.replace(',', ''), errors='coerce') / 1000
         df_price_clean = df_price[['Code', 'Name', '收盤價', '當日成交量(張)']].rename(columns={'Code': '股票代碼', 'Name': '股票名稱'})
 
-    # 2. 下載籌碼 (自動回溯)
+    # 2. 下載籌碼
     df_chips_clean = pd.DataFrame()
     headers = {'User-Agent': 'Mozilla/5.0'}
     for i in range(7):
@@ -35,7 +35,6 @@ def get_stock_data():
             df_raw = pd.DataFrame(data, columns=fields)
             df_raw.columns = df_raw.columns.str.strip()
             
-            # 簡化欄位處理
             col_code = '證券代號'
             fi_col = [c for c in df_raw.columns if '外資' in c and '買賣超股數' in c][0]
             it_col = [c for c in df_raw.columns if '投信' in c and '買賣超股數' in c][0]
@@ -54,39 +53,39 @@ def get_stock_data():
     final_df['籌碼集中度(%)'] = (final_df['主力買超(張)'] / final_df['當日成交量(張)'] * 100).round(2)
     return final_df
 
-# 載入數據
+# 載入與篩選
 try:
     df = get_stock_data()
     
-    # 側邊欄篩選
     st.sidebar.header("🔍 篩選條件")
     min_price = st.sidebar.number_input("最低股價", value=0.0)
     max_price = st.sidebar.number_input("最高股價", value=100.0)
     min_vol = st.sidebar.number_input("最低成交量 (張)", value=1000)
     min_chip = st.sidebar.slider("最低籌碼集中度 (%)", -50, 50, 5)
     
-    # 篩選邏輯
     filtered_df = df[(df['收盤價'] >= min_price) & (df['收盤價'] <= max_price) & 
                      (df['當日成交量(張)'] >= min_vol) & (df['籌碼集中度(%)'] >= min_chip)]
     
-    # 排序
     sort_by = st.sidebar.selectbox("排序基準", ["籌碼集中度(%)", "當日成交量(張)", "外資買超(張)", "投信買超(張)"])
     filtered_df = filtered_df.sort_values(by=sort_by, ascending=False)
     
-    # 顯示
-    st.write(f"共 {len(filtered_df)} 檔股票符合條件")
+    # 手機版優化顯示
+    st.write(f"📊 共 {len(filtered_df)} 檔股票符合條件")
     
-    # 處理連結
     display_df = filtered_df.copy()
     display_df['K線圖'] = display_df['股票代碼'].apply(lambda x: f"https://tw.stock.yahoo.com/quote/{x}")
     
     st.dataframe(
         display_df,
+        use_container_width=True, 
         column_config={
-            "K線圖": st.column_config.LinkColumn("查看K線", display_text="📈 點擊開啟")
+            "股票代碼": st.column_config.Column(width="small"),
+            "股票名稱": st.column_config.Column(width="medium"),
+            "籌碼集中度(%)": st.column_config.NumberColumn(format="%.2f%%"),
+            "K線圖": st.column_config.LinkColumn("查看", display_text="📈 K線")
         },
         hide_index=True
     )
 
 except Exception as e:
-    st.error(f"資料讀取失敗，請稍後再試: {e}")
+    st.error(f"資料讀取錯誤: {e}")
