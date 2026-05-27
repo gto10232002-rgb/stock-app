@@ -7,7 +7,7 @@ import time
 # 頁面設定
 st.set_page_config(page_title="台股籌碼選股器", layout="wide")
 
-# 手機版優化：縮小標題
+# 標題縮小優化
 st.markdown("### 📊 台股籌碼選股")
 
 # 數據獲取函式
@@ -55,7 +55,7 @@ def get_stock_data():
     final_df['籌碼集中度(%)'] = (final_df['主力買超(張)'] / final_df['當日成交量(張)'] * 100).round(2)
     return final_df
 
-# 載入與篩選
+# 執行載入與篩選
 try:
     df = get_stock_data()
     
@@ -65,5 +65,33 @@ try:
     min_vol = st.sidebar.number_input("最低成交量 (張)", value=1000)
     min_chip = st.sidebar.slider("最低籌碼集中度 (%)", -50, 50, 5)
     
-    filtered_df = df[(df['收盤價'] >= min_price) & (df['收盤價'] <= max_price) & 
-                     (df['當日成交量(張)'] >= min_vol) & (df['籌碼集中度(%)']
+    # 正確的篩選邏輯
+    filtered_df = df[
+        (df['收盤價'] >= min_price) & 
+        (df['收盤價'] <= max_price) & 
+        (df['當日成交量(張)'] >= min_vol) & 
+        (df['籌碼集中度(%)'] >= min_chip)
+    ].copy()
+    
+    sort_by = st.sidebar.selectbox("排序基準", ["籌碼集中度(%)", "當日成交量(張)"])
+    filtered_df = filtered_df.sort_values(by=sort_by, ascending=False)
+    
+    # 顯示區塊
+    st.write(f"📈 符合條件：{len(filtered_df)} 檔")
+    
+    # 建立 K 線連結
+    filtered_df['K線'] = filtered_df['股票代碼'].apply(lambda x: f"[📈看K線](https://tw.stock.yahoo.com/quote/{x})")
+    
+    # 精簡表格
+    table_df = filtered_df.rename(columns={
+        '股票代碼': '代號',
+        '股票名稱': '名稱',
+        '收盤價': '股價',
+        '籌碼集中度(%)': '集中度%'
+    })
+    
+    # 顯示靜態表格
+    st.table(table_df[['代號', '名稱', '股價', '集中度%', 'K線']].head(30))
+
+except Exception as e:
+    st.error(f"程式執行錯誤，請檢查篩選設定: {e}")
