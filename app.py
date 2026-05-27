@@ -45,7 +45,7 @@ def get_stock_data():
     df['chip_ratio'] = ((df['fi'] + df['it']) / df['vol'] * 100).round(2)
     return df
 
-# 主執行區塊
+# 主程式邏輯
 try:
     df = get_stock_data()
     st.sidebar.header("篩選條件")
@@ -54,20 +54,31 @@ try:
     min_v = st.sidebar.number_input("最低成交量(張)", value=1000)
     min_c = st.sidebar.slider("最低籌碼集中度(%)", -50, 50, 5)
     
-    # 篩選與整理
+    # 執行篩選
     res = df[(df['price'] >= min_p) & (df['price'] <= max_p) & 
              (df['vol'] >= min_v) & (df['chip_ratio'] >= min_c)].copy()
     res = res.sort_values(by='chip_ratio', ascending=False)
     
-    # 關鍵合併：將代號、名稱與連結組合成 LinkColumn 格式
-    # URL 格式: https://tw.stock.yahoo.com/quote/代號
+    # 建立合併欄位 (URL + 代號 + 名稱)
     res['個股資訊'] = "https://tw.stock.yahoo.com/quote/" + res['code'] + " " + res['code'] + " " + res['name']
     
+    # 只取需要顯示的欄位
     display_df = res[['個股資訊', 'price', 'chip_ratio']].rename(
         columns={'price': '股價', 'chip_ratio': '集中度%'}
     )
     
     st.write("📈 符合條件：" + str(len(display_df)) + " 檔")
     
-    # 顯示表格
+    # 顯示表格 (使用 LinkColumn 並隱藏 URL)
     st.dataframe(
+        display_df,
+        column_config={
+            "個股資訊": st.column_config.LinkColumn(
+                "代號/名稱", 
+                help="點擊前往 Yahoo 股市查看 K 線",
+                display_text=r"(.*) (.*)"
+            ),
+            "股價": st.column_config.NumberColumn(format="%.2f"),
+            "集中度%": st.column_config.NumberColumn(format="%.2f")
+        },
+        use_container_width=
