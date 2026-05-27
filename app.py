@@ -7,7 +7,7 @@ import time
 # 頁面設定
 st.set_page_config(page_title="台股籌碼選股器", layout="wide")
 
-# 標題縮小優化
+# 標題優化
 st.markdown("### 📊 台股籌碼選股")
 
 # 數據獲取函式
@@ -55,22 +55,10 @@ def get_stock_data():
     final_df['籌碼集中度(%)'] = (final_df['主力買超(張)'] / final_df['當日成交量(張)'] * 100).round(2)
     return final_df
 
-# 執行載入與篩選
+# 執行篩選與顯示
 try:
     df = get_stock_data()
     
     st.sidebar.header("🔍 篩選條件")
     min_price = st.sidebar.number_input("最低股價", value=0.0)
-    max_price = st.sidebar.number_input("最高股價", value=100.0)
-    min_vol = st.sidebar.number_input("最低成交量 (張)", value=1000)
-    min_chip = st.sidebar.slider("最低籌碼集中度 (%)", -50, 50, 5)
-    
-    # 篩選邏輯
-    filtered_df = df[
-        (df['收盤價'] >= min_price) & 
-        (df['收盤價'] <= max_price) & 
-        (df['當日成交量(張)'] >= min_vol) & 
-        (df['籌碼集中度(%)'] >= min_chip)
-    ].copy()
-    
-    sort_by = st.sidebar.selectbox("排序基準", ["籌碼集中
+    max_price = st.sidebar.number_input("最高股
