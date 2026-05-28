@@ -95,7 +95,7 @@ def get_stock_base_data():
     return df
 
 try:
-    with st.spinner("正在同步最新籌碼與產業數據..."):
+    with St.spinner("正在同步最新籌碼與產業數據..."):
         df = get_stock_base_data()
     
     if df.empty:
@@ -107,4 +107,99 @@ try:
         min_v = st.sidebar.number_input("最低成交量(張)", value=1000)
         max_pe = st.sidebar.number_input("最高本益比 (0為不限)", value=30.0)
         
-        target_industry = st.sidebar.selectbox("篩選特定產業", ["全部"] + sorted(list(df['industry'].dropna().unique
+        target_industry = st.sidebar.selectbox("篩選特定產業", ["全部"] + sorted(list(df['industry'].dropna().unique())))
+        
+        st.sidebar.header("🧠 進階策略加選")
+        enable_drawdown = st.sidebar.checkbox("開啟「回檔策略」", value=False)
+        enable_strong = st.sidebar.checkbox("開啟「近期強勢群組」", value=False)
+        
+        if enable_drawdown:
+            st.sidebar.markdown("---")
+            st.sidebar.caption("🛠️ 回檔策略細項設定")
+            support_mode = st.sidebar.selectbox("└ 籌碼支撐型態", ["全部符合", "單日爆發強勢型", "波段洗刷接貨型"])
+            dynamic_threshold = st.sidebar.checkbox("└ 啟用股本規模動態門檻調整", value=True)
+            min_dd = st.sidebar.slider("└ 最低回檔幅度(%)", 0, 50, 5)
+            
+        if enable_strong:
+            st.sidebar.markdown("---")
+            st.sidebar.caption("🛠️ 近期強勢群組細項設定")
+            min_change = st.sidebar.slider("└ 最低今日漲幅(%)", -10, 10, 5)
+        
+        # 1. 執行基礎過濾
+        res = df[(df['price'] >= min_p) & (df['price'] <= max_p) & (df['vol'] >= min_v)].copy()
+        if max_pe > 0:
+            res = res[(res['pe'] > 0) & (res['pe'] <= max_pe)]
+            
+        if target_industry != "全部":
+            res = res[res['industry'] == target_industry]
+            
+        dd_dict = {}
+        chg_dict = {}
+        
+        # 2. ⚡ 究極加速：完全向量化矩陣運算模式（全版本結構相容型） ⚡
+        if not res.empty and (enable_drawdown or enable_strong):
+            with st.spinner(f"正在以矩陣加速模式分析 {len(res)} 檔股票的即時技術指標..."):
+                ticker_list = [f"{str(c).strip()}.TW" for c in res['code']]
+                try:
+                    # threads=True 多執行緒高速併發下載
+                    hist_data = yf.download(ticker_list, period="1mo", threads=True, progress=False)
+                    
+                    if not hist_data.empty:
+                        # 處理多檔股票（MultiIndex 結構）
+                        if isinstance(hist_data.columns, pd.MultiIndex):
+                            # 【核心優化】動態搜尋指標所在層級，完美防止結構移位崩潰
+                            metric_level = None
+                            for l in range(hist_data.columns.nlevels):
+                                if 'Close' in hist_data.columns.get_level_values(l):
+                                    metric_level = l
+                                    break
+                            
+                            if metric_level is not None:
+                                close_df = hist_data.xs('Close', level=metric_level, axis=1)
+                                high_df = hist_data.xs('High', level=metric_level, axis=1)
+                                
+                                # 剔除尾部尚未開盤或全空的 NaN 無效日期列
+                                while len(close_df) > 0 and close_df.iloc[-1].isna().all():
+                                    close_df = close_df.iloc[:-1]
+                                    high_df = high_df.iloc[:-1]
+                                
+                                if len(close_df) >= 2:
+                                    # 順向填充局部訊號缺失空值
+                                    close_df = close_df.ffill()
+                                    high_df = high_df.ffill()
+                                    
+                                    # 【效能噴發】全矩陣向量化計算，拋棄傳統 Python 慢速 for 迴圈
+                                    max_high = high_df.max()
+                                    last_close = close_df.iloc[-1]
+                                    prev_close = close_df.iloc[-2]
+                                    
+                                    drawdown_series = ((max_high - last_close) / max_high * 100).round(2)
+                                    change_series = ((last_close - prev_close) / prev_close * 100).round(2)
+                                    
+                                    # 清理 Index 格式並轉換為 Dict 供對照
+                                    drawdown_series.index = drawdown_series.index.str.split('.').str[0]
+                                    change_series.index = change_series.index.str.split('.').str[0]
+                                    
+                                    dd_dict = drawdown_series.to_dict()
+                                    chg_dict = change_series.to_dict()
+                        else:
+                            # 處理極端情況：只有一檔股票（單層 Index 結構）
+                            if 'Close' in hist_data.columns and 'High' in hist_data.columns:
+                                close_series = hist_data['Close']
+                                high_series = hist_data['High']
+                                
+                                while len(close_series) > 0 and pd.isna(close_series.iloc[-1]):
+                                    close_series = close_series.iloc[:-1]
+                                    high_series = high_series.iloc[:-1]
+                                    
+                                if len(close_series) >= 2:
+                                    close_series = close_series.ffill()
+                                    high_series = high_series.ffill()
+                                    
+                                    max_high = high_series.max()
+                                    last_close = close_series.iloc[-1]
+                                    prev_close = close_series.iloc[-2]
+                                    
+                                    code_clean = str(res['code'].iloc[0]).strip()
+                                    dd_dict = {code_clean: round(((max_high - last_close) / max_high) * 100, 2)}
+                                    chg_dict = {code_clean: round(((last_close -
