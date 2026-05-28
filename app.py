@@ -9,7 +9,7 @@ import yfinance as yf
 st.set_page_config(page_title="StockTool", layout="wide")
 st.markdown("### 📊 台股籌碼選股")
 
-# 注入特製的手機行動端網頁表格 CSS（消滅滾動條、優化字體與對照體驗）
+# 注入特製的手機行動端網頁表格 CSS
 st.markdown("""
 <style>
     .phone-table-container {
@@ -35,7 +35,6 @@ st.markdown("""
         border-bottom: 1px solid #dee2e6;
         vertical-align: middle;
     }
-    /* 暗色模式相容 */
     html[data-theme="dark"] .phone-table th {
         background-color: #262730;
         color: #eee;
@@ -137,6 +136,11 @@ try:
     if df.empty:
         st.warning("暫時無法取得證交所資料，請確認開盤日或稍後再試。")
     else:
+        # 1. 初始化進階變數預設值（防止變數在特定狀況未宣告或型態錯誤而報錯）
+        support_mode = "全部符合"
+        dynamic_threshold = True
+        min_dd = 5
+
         # 側邊欄：基礎篩選
         st.sidebar.header("🎯 基礎篩選條件")
         min_p = st.sidebar.number_input("最低股價", value=0.0)
@@ -148,6 +152,7 @@ try:
         st.sidebar.header("🛡️ 進階篩選設定")
         apply_lei_rules = st.sidebar.checkbox("是否套用雷老闆實務心法篩選", value=True)
         
+        # 如果使用者開啟總開關，才從側邊欄讀取控制項，覆蓋預設值
         if apply_lei_rules:
             support_mode = st.sidebar.selectbox(
                 "└ 籌碼支撐型態",
@@ -164,16 +169,19 @@ try:
         if max_pe > 0:
             res = res[(res['pe'] > 0) & (res['pe'] <= max_pe)]
             
-        # --- 第二階段：根據總開關決定是否套用籌碼與回檔心法 ---
+        # --- 第二階段：防禦型安全過濾邏輯 ---
         if apply_lei_rules:
-            if dynamic_threshold:
+            # 1. 動態門檻判定（加入安全保護型態防錯）
+            if bool(dynamic_threshold) is True:
                 cond_large = (res['value_billion'] >= 5.0) & (res['chip_ratio'] >= 2.5)
                 cond_small = (res['value_billion'] < 5.0) & (res['chip_ratio'] >= 5.0)
                 res = res[cond_large | cond_small]
                 
+            # 2. 支撐型態過濾
             if support_mode == "單日爆發強勢型 (集中度>5%)":
                 res = res[res['chip_ratio'] >= 5.0]
                 
+            # 3. 計算一個月回檔率
             if not res.empty:
                 with st.spinner(f"正在分析 {len(res)} 檔目標個股的歷史回檔波動..."):
                     res['回檔%'] = res['code'].apply(get_single_drawdown)
@@ -185,6 +193,7 @@ try:
             else:
                 res['回檔%'] = pd.Series(dtype=float)
 
+            # 4. 建立支撐力道標籤
             def judge_support_strength(row):
                 if row['chip_ratio'] >= 10.0:
                     return '<span class="badge badge-danger">🔥強爆發</span>'
@@ -193,7 +202,7 @@ try:
                 elif row['value_billion'] >= 5.0 and row['chip_ratio'] >= 2.5:
                     return '<span class="badge badge-info">🏛️法人撐</span>'
                 else:
-                    return '<span class="badge badge-secondary">观察中</span>'
+                    return '<span class="badge badge-secondary">觀察中</span>'
 
             if not res.empty:
                 res['支撐力道'] = res.apply(judge_support_strength, axis=1)
@@ -202,6 +211,7 @@ try:
                 res['支撐力道'] = pd.Series(dtype=str)
                 
         else:
+            # 如果【未啟用】心法篩選
             res['回檔%'] = 0.0
             res['支撐力道'] = '<span class="badge badge-secondary">未啟用</span>'
             if not res.empty:
@@ -210,11 +220,10 @@ try:
         # 輸出統計結果
         st.success(f"🎯 篩選完畢，最終符合條件：{len(res)} 檔")
         
-        # --- 【核心重頭戲】特製無滾動條、高對照性手機端 HTML 表格 ---
+        # --- 網頁原生精簡表格輸出（零滑動條、高度橫向可比對性） ---
         if res.empty:
             st.info("無符合當前條件的股票，請調整左側篩選標準。")
         else:
-            # 建立表格表頭
             table_html = """
             <div class="phone-table-container">
                 <table class="phone-table">
@@ -230,7 +239,6 @@ try:
                     <tbody>
             """
             
-            # 填入每一列數據
             for idx, row in res.iterrows():
                 yahoo_url = f"https://tw.stock.yahoo.com/quote/{row['code']}"
                 table_html += f"""
@@ -250,8 +258,6 @@ try:
                 </table>
             </div>
             """
-            
-            # 使用 markdown 將精簡表格渲染到畫面上
             st.markdown(table_html, unsafe_allow_html=True)
 
 except Exception as e:
