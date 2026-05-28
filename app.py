@@ -8,15 +8,15 @@ import yfinance as yf
 # 頁面配置
 st.set_page_config(page_title="StockTool", layout="wide")
 
-# 🎯 【修改點 1】注入 CSS：消滅頂部無效空白、縮緊標題間距
+# 🎯 【修正點】放寬安全邊距：從 1.2rem 釋放至 2.8rem，確保字體絕不被頂部卡到
 st.markdown("""
 <style>
-    /* 縮小整頁頂部與底部的邊距 */
+    /* 縮小整頁頂部與底部的邊距，但保留安全視窗高度 */
     .block-container {
-        padding-top: 1.2rem !important;
+        padding-top: 2.8rem !important; 
         padding-bottom: 0rem !important;
     }
-    /* 讓主標題緊貼頂部 */
+    /* 讓主標題有適當的生存空間 */
     h3 {
         margin-top: 0rem !important;
         margin-bottom: 0.4rem !important;
@@ -183,7 +183,7 @@ try:
         
         st.success(f"🎯 篩選完畢，最終符合條件：{len(display_df)} 檔")
         
-        # 🎯 【修改點 2】在大表格最下方新增 height=650，強迫表格向下伸展、吃掉空白
+        # 中間大表格：高度維持 650 吃掉下方死白
         st.dataframe(
             display_df[['代號', '名稱', '股價', '回檔%', '集中度%', '支撐力道', '成交額(億)', '本益比', 'K線連結']],
             column_config={
@@ -196,7 +196,7 @@ try:
             },
             use_container_width=True,
             hide_index=True,
-            height=650  # <-- 加上這一行，中間資料區立刻放大！
+            height=650
         )
 
 except Exception as e:
