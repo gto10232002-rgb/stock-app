@@ -118,7 +118,7 @@ try:
     if df.empty:
         st.warning("暫時無法取得證交所資料，請確認開盤日或稍後再試。")
     else:
-        # --- 側邊欄改版：改為勾選模式與新名稱 ---
+        # --- 側邊欄改版：純勾選模式與繁體化名稱 ---
         st.sidebar.header("🎯 基礎篩選條件")
         min_p = st.sidebar.number_input("最低股價", value=0.0)
         max_p = st.sidebar.number_input("最高股價", value=500.0)
@@ -128,11 +128,10 @@ try:
         target_industry = st.sidebar.selectbox("篩選特定產業", ["全部"] + sorted(list(df['industry'].dropna().unique())))
         
         st.sidebar.header("🧠 進階策略加選")
-        # 轉為 Checkbox 勾選型態
-        enable_drawdown = st.sidebar.checkbox("开启「回檔策略」", value=False)
-        enable_strong = st.sidebar.checkbox("开启「近期強勢群組」", value=False)
+        # 精確更換名稱並轉為繁體「開啟」
+        enable_drawdown = st.sidebar.checkbox("開啟「回檔策略」", value=False)
+        enable_strong = st.sidebar.checkbox("開啟「近期強勢群組」", value=False)
         
-        # 展開回檔策略的細項參數
         if enable_drawdown:
             st.sidebar.markdown("---")
             st.sidebar.caption("🛠️ 回檔策略細項設定")
@@ -140,7 +139,6 @@ try:
             dynamic_threshold = st.sidebar.checkbox("└ 啟用股本規模動態門檻調整", value=True)
             min_dd = st.sidebar.slider("└ 最低回檔幅度(%)", 0, 50, 5)
             
-        # 展開近期強勢群組的細項參數
         if enable_strong:
             st.sidebar.markdown("---")
             st.sidebar.caption("🛠️ 近期強勢群組細項設定")
@@ -154,14 +152,13 @@ try:
         if target_industry != "全部":
             res = res[res['industry'] == target_industry]
             
-        # 2. 只有在至少勾選一個進階策略時，才去向 Yahoo Finance 抓技術指標（省時防卡）
+        # 2. 只有在至少勾選一個進階策略時，才去向 Yahoo Finance 抓技術指標
         if not res.empty:
             if enable_drawdown or enable_strong:
                 with st.spinner(f"正在分析 {len(res)} 檔股票的即時技術指標..."):
                     tech_data = res['code'].apply(get_technical_data).apply(pd.Series)
                     res = pd.concat([res, tech_data], axis=1)
                 
-                # 套用回檔策略過濾
                 if enable_drawdown:
                     if dynamic_threshold:
                         cond_large = (res['value_billion'] >= 5.0) & (res['chip_ratio'] >= 2.5)
@@ -171,4 +168,76 @@ try:
                         res = res[res['chip_ratio'] >= 5.0]
                     res = res[res['回檔%'] >= min_dd]
                     if support_mode == "波段洗刷接貨型":
-                        res = res[res['回檔%'] >= max(8.0,
+                        res = res[res['回檔%'] >= max(8.0, min_dd)]
+                        
+                if enable_strong:
+                    res = res[res['今日漲幅%'] >= min_change]
+            else:
+                res['回檔%'] = 0.0
+                res['今日漲幅%'] = 0.0
+        else:
+            res['回檔%'] = pd.Series(dtype=float)
+            res['今日漲幅%'] = pd.Series(dtype=float)
+
+        # 3. 計算支撐力道標籤
+        def judge_support_strength(row):
+            if row['chip_ratio'] >= 10.0: return "🔥 極強支撐"
+            elif row['chip_ratio'] >= 5.0: return "✅ 健康買盤"
+            else: return "🔹 觀察中"
+            
+        if not res.empty:
+            res['支撐力道'] = res.apply(judge_support_strength, axis=1)
+            if enable_strong:
+                res = res.sort_values(by='今日漲幅%', ascending=False)
+            else:
+                res = res.sort_values(by=['chip_ratio', '回檔%'], ascending=[False, False])
+        else:
+            res['支撐力道'] = pd.Series(dtype=str)
+
+        res['K線連結'] = res['code'].apply(lambda x: f"https://tw.stock.yahoo.com/quote/{x}")
+        
+        display_df = res.rename(columns={
+            'code': '代號', 'name': '名稱', 'industry': '產業', 'price': '股價', 
+            'chip_ratio': '集中度%', 'pe': '本益比', 'value_billion': '成交額(億)'
+        })
+        
+        active_strategies = []
+        if enable_drawdown: active_strategies.append("回檔策略")
+        if enable_strong: active_strategies.append("近期強勢群組")
+        strategy_text = " + ".join(active_strategies) if active_strategies else "純基礎條件"
+        
+        st.success(f"🎯 當前過濾組合：【{strategy_text}】｜ 最終符合條件：{len(display_df)} 檔")
+        
+        # 族群共振看板
+        if not display_df.empty and '今日漲幅%' in display_df.columns:
+            strong_stocks = display_df[display_df['今日漲幅%'] >= 5.0]
+            if not strong_stocks.empty:
+                industry_counts = strong_stocks['產業'].value_counts()
+                hot_industries = industry_counts[industry_counts >= 2]
+                
+                if not hot_industries.empty:
+                    st.info("🚨 **發現族群共振！以下產業出現多檔大漲股：**")
+                    cols = st.columns(min(len(hot_industries), 5))
+                    for i, (ind, count) in enumerate(hot_industries.items()):
+                        if i < 5:
+                            with cols[i]:
+                                st.metric(label=f"🔥 {ind}", value=f"{count} 檔強勢")
+
+        st.dataframe(
+            display_df[['代號', '名稱', '產業', '今日漲幅%', '股價', '回檔%', '集中度%', '支撐力道', '成交額(億)', '本益比', 'K線連結']],
+            column_config={
+                "今日漲幅%": st.column_config.NumberColumn(format="%.2f %%"),
+                "股價": st.column_config.NumberColumn(format="%.2f"),
+                "回檔%": st.column_config.NumberColumn(format="%.2f %%"),
+                "集中度%": st.column_config.NumberColumn(format="%.2f %%"),
+                "成交額(億)": st.column_config.NumberColumn(format="%.2f 億"),
+                "本益比": st.column_config.NumberColumn(format="%.2f"),
+                "K線連結": st.column_config.LinkColumn("K線", display_text="📈查看")
+            },
+            use_container_width=True,
+            hide_index=True,
+            height=650
+        )
+
+except Exception as e:
+    st.error(f"程式發生錯誤: {e}")
