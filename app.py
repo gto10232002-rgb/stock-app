@@ -7,7 +7,8 @@ import yfinance as yf
 
 # 頁面配置
 st.set_page_config(page_title="StockTool", layout="wide")
-st.markdown("### 📊 台股籌碼選股 (雷老闆實務心法升級版)")
+# 根據需求：拿掉括號標題，維持乾淨主標
+st.markdown("### 📊 台股籌碼選股")
 
 # 快取功能 1：抓取證交所基本與籌碼資料 (每小時更新一次)
 @st.cache_data(ttl=3600)
@@ -79,79 +80,88 @@ def get_single_drawdown(code):
 
 # --- 主程式區塊 ---
 try:
-    # 使用 spinner 包裝初始載入，載入完自動隱藏
-    with st.spinner("正在從小鎮與證交所同步最新籌碼數據..."):
+    with st.spinner("正在同步最新籌碼數據..."):
         df = get_stock_base_data()
     
     if df.empty:
         st.warning("暫時無法取得證交所資料，請確認開盤日或稍後再試。")
     else:
-        # 側邊欄配置
+        # 側邊欄：基礎篩選
         st.sidebar.header("🎯 基礎篩選條件")
         min_p = st.sidebar.number_input("最低股價", value=0.0)
         max_p = st.sidebar.number_input("最高股價", value=500.0)
         min_v = st.sidebar.number_input("最低成交量(張)", value=1000)
         max_pe = st.sidebar.number_input("最高本益比 (0為不限)", value=30.0)
         
-        st.sidebar.header("🛡️ 雷老闆實務心法篩選")
-        support_mode = st.sidebar.selectbox(
-            "1&2. 籌碼支撐型態",
-            ["全部符合", "單日爆發強勢型 (集中度>5%)", "波段洗刷接貨型 (高回檔+法人守穩)"]
-        )
+        # 根據需求：側邊欄新增總開關
+        st.sidebar.header("🛡️ 進階篩選設定")
+        apply_lei_rules = st.sidebar.checkbox("是否套用雷老闆實務心法篩選", value=True)
         
-        dynamic_threshold = st.sidebar.checkbox(
-            "3. 啟用股本規模動態門檻調整", 
-            value=True,
-            help="大型股(當日成交額>5億)門檻自動調降至2.5%；中小型股維持5.0%"
-        )
-        
-        min_dd = st.sidebar.slider("最低回檔幅度(%)", 0, 50, 5, help="尋找股價從一個月內高點修正下來的幅度")
+        # 如果開啟總開關，才顯示子選單
+        if apply_lei_rules:
+            support_mode = st.sidebar.selectbox(
+                "└ 籌碼支撐型態",
+                ["全部符合", "單日爆發強勢型 (集中度>5%)", "波段洗刷接貨型 (高回檔+法人守穩)"]
+            )
+            dynamic_threshold = st.sidebar.checkbox(
+                "└ 啟用股本規模動態門檻調整", 
+                value=True,
+                help="大型股(成交額>5億)門檻自動調降至2.5%；中小型股維持5.0%"
+            )
+            min_dd = st.sidebar.slider("└ 最低回檔幅度(%)", 0, 50, 5)
         
         # --- 第一階段：基礎與基本面篩選 ---
         res = df[(df['price'] >= min_p) & (df['price'] <= max_p) & (df['vol'] >= min_v)].copy()
         if max_pe > 0:
             res = res[(res['pe'] > 0) & (res['pe'] <= max_pe)]
             
-        # --- 第二階段：動態門檻判定 ---
-        if dynamic_threshold:
-            cond_large = (res['value_billion'] >= 5.0) & (res['chip_ratio'] >= 2.5)
-            cond_small = (res['value_billion'] < 5.0) & (res['chip_ratio'] >= 5.0)
-            res = res[cond_large | cond_small]
-            
-        # --- 第三階段：支撐型態過濾 ---
-        if support_mode == "單日爆發強勢型 (集中度>5%)":
-            res = res[res['chip_ratio'] >= 5.0]
-            
-        # --- 第四階段：計算一個月回檔率 (使用 spinner，計算完畢自動不留痕跡消失) ---
-        if not res.empty:
-            with st.spinner(f"正在分析 {len(res)} 檔目標個股的歷史回檔波動..."):
-                res['回檔%'] = res['code'].apply(get_single_drawdown)
-            
-            # 執行回檔率篩選
-            res = res[res['回檔%'] >= min_dd]
-            
-            # 若選擇波段洗刷型，要求基本回檔幅度
-            if support_mode == "波段洗刷接貨型 (高回檔+法人守穩)":
-                res = res[res['回檔%'] >= max(8.0, min_dd)]
-        else:
-            res['回檔%'] = pd.Series(dtype=float)
-
-        # --- 第五階段：標記實務支撐力道標籤 ---
-        def judge_support_strength(row):
-            if row['chip_ratio'] >= 10.0:
-                return "🔥 極強支撐 (單日爆發)"
-            elif row['chip_ratio'] >= 5.0:
-                return "✅ 健康買盤 (強勢股)"
-            elif row['value_billion'] >= 5.0 and row['chip_ratio'] >= 2.5:
-                return "🏛️ 大型股法人撐盤"
+        # --- 第二階段：根據總開關決定是否套用籌碼與回檔心法 ---
+        if apply_lei_rules:
+            # 1. 動態門檻判定
+            if dynamic_threshold:
+                cond_large = (res['value_billion'] >= 5.0) & (res['chip_ratio'] >= 2.5)
+                cond_small = (res['value_billion'] < 5.0) & (res['chip_ratio'] >= 5.0)
+                res = res[cond_large | cond_small]
+                
+            # 2. 支撐型態過濾
+            if support_mode == "單日爆發強勢型 (集中度>5%)":
+                res = res[res['chip_ratio'] >= 5.0]
+                
+            # 3. 計算一個月回檔率 (有開啟心法才去爬歷史資料)
+            if not res.empty:
+                with st.spinner(f"正在分析 {len(res)} 檔目標個股的歷史回檔波動..."):
+                    res['回檔%'] = res['code'].apply(get_single_drawdown)
+                
+                res = res[res['回檔%'] >= min_dd]
+                
+                if support_mode == "波段洗刷接貨型 (高回檔+法人守穩)":
+                    res = res[res['回檔%'] >= max(8.0, min_dd)]
             else:
-                return "🔹 弱支撐/觀察中"
+                res['回檔%'] = pd.Series(dtype=float)
 
-        if not res.empty:
-            res['支撐力道'] = res.apply(judge_support_strength, axis=1)
-            res = res.sort_values(by=['chip_ratio', '回檔%'], ascending=[False, False])
+            # 4. 標記實務支撐力道標籤
+            def judge_support_strength(row):
+                if row['chip_ratio'] >= 10.0:
+                    return "🔥 極強支撐 (單日爆發)"
+                elif row['chip_ratio'] >= 5.0:
+                    return "✅ 健康買盤 (強勢股)"
+                elif row['value_billion'] >= 5.0 and row['chip_ratio'] >= 2.5:
+                    return "🏛️ 大型股法人撐盤"
+                else:
+                    return "🔹 弱支撐/觀察中"
+
+            if not res.empty:
+                res['支撐力道'] = res.apply(judge_support_strength, axis=1)
+                res = res.sort_values(by=['chip_ratio', '回檔%'], ascending=[False, False])
+            else:
+                res['支撐力道'] = pd.Series(dtype=str)
+                
         else:
-            res['支撐力道'] = pd.Series(dtype=str)
+            # 如果【未啟用】心法篩選：不篩選籌碼與回檔，給予預設標記，並依集中度排序
+            res['回檔%'] = 0.0
+            res['支撐力道'] = "未啟用心法"
+            if not res.empty:
+                res = res.sort_values(by='chip_ratio', ascending=False)
 
         # 建立 Yahoo K線連結
         res['K線連結'] = res['code'].apply(lambda x: f"https://tw.stock.yahoo.com/quote/{x}")
@@ -165,8 +175,8 @@ try:
             'value_billion': '成交額(億)'
         })
         
-        # 畫面頂部直接輸出統計與最終大表格（無任何殘留文字阻擋）
-        st.success(f"🎯 經過雷老闆實務心法過濾，最終符合條件：{len(display_df)} 檔")
+        # 畫面頂部輸出統計與最終大表格
+        st.success(f"🎯 篩選完畢，最終符合條件：{len(display_df)} 檔")
         
         st.dataframe(
             display_df[['代號', '名稱', '股價', '回檔%', '集中度%', '支撐力道', '成交額(億)', '本益比', 'K線連結']],
