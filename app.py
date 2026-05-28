@@ -25,6 +25,7 @@ st.markdown("### 📊 台股多元策略選股系統")
 
 @st.cache_data(ttl=3600)
 def get_stock_base_data():
+    # A. 取得每日收盤行情
     url_price = "https://openapi.twse.com.tw/v1/exchangeReport/STOCK_DAY_ALL"
     res_price = requests.get(url_price, timeout=20)
     df_price = pd.DataFrame()
@@ -36,6 +37,7 @@ def get_stock_base_data():
         df_price['trade_value'] = pd.to_numeric(raw_price['TradeValue'].str.replace(',', ''), errors='coerce')
         df_price = df_price[['Code', 'Name', 'price', 'vol', 'trade_value']].rename(columns={'Code': 'code', 'Name': 'name'})
 
+    # B. 取得本益比資料
     url_pe = "https://openapi.twse.com.tw/v1/exchangeReport/BWIBBU_ALL"
     res_pe = requests.get(url_pe, timeout=20)
     df_pe = pd.DataFrame()
@@ -44,6 +46,7 @@ def get_stock_base_data():
         df_pe = raw_pe[['Code', 'PEratio']].rename(columns={'Code': 'code', 'PEratio': 'pe'})
         df_pe['pe'] = pd.to_numeric(df_pe['pe'].str.replace(',', ''), errors='coerce')
 
+    # C. 取得產業別對照
     url_industry = "https://openapi.twse.com.tw/v1/opendata/t187ap03_L"
     res_ind = requests.get(url_industry, timeout=20)
     df_ind = pd.DataFrame()
@@ -55,7 +58,7 @@ def get_stock_base_data():
             "01": "水泥工業", "02": "食品工業", "03": "塑膠工業", "04": "紡織纖維",
             "05": "電機機械", "06": "電器電纜", "07": "化學工業", "08": "生技醫療業",
             "09": "玻璃陶瓷", "10": "造紙工業", "11": "鋼鐵工業", "12": "橡膠工業",
-            "13": "汽車工業", "14": "建材營建", "15": "航運業", "16": "觀光餐旅",
+            "13": "汽車工業", "14": "建材营建", "15": "航運業", "16": "觀光餐旅",
             "17": "金融保險", "18": "貿易百貨", "19": "綜合業", "20": "其他業",
             "23": "油電燃氣業", "24": "半導體業", "25": "電腦及週邊設備業", 
             "26": "光電業", "27": "通信網路業", "28": "電子零組件業", 
@@ -64,24 +67,34 @@ def get_stock_base_data():
         }
         df_ind['industry'] = df_ind['industry'].astype(str).str.strip().map(ind_map).fillna(df_ind['industry'])
 
+    # D. 🛡️ 終極安全晶片籌碼撈取機制 (防止 IndexError)
     df_chips = pd.DataFrame()
     headers = {'User-Agent': 'Mozilla/5.0'}
     for i in range(7):
         date_str = (datetime.datetime.now() - datetime.timedelta(days=i)).strftime("%Y%m%d")
         url = f"https://www.twse.com.tw/rwd/zh/fund/T86?date={date_str}&selectType=ALLBUT0999&response=json"
-        res = requests.get(url, headers=headers, timeout=20)
-        if res.status_code == 200 and "data" in res.json():
-            data = res.json()["data"]
-            fields = res.json()["fields"]
-            df_raw = pd.DataFrame(data, columns=fields)
-            df_raw.columns = df_raw.columns.str.strip()
-            fi_col = [c for c in df_raw.columns if '外資' in c and '買賣超股數' in c][0]
-            it_col = [c for c in df_raw.columns if '投信' in c and '買賣超股數' in c][0]
-            df_chips['code'] = df_raw['證券代號'].astype(str).str.strip()
-            df_chips['fi'] = pd.to_numeric(df_raw[fi_col].str.replace(',', ''), errors='coerce') / 1000
-            df_chips['it'] = pd.to_numeric(df_raw[it_col].str.replace(',', ''), errors='coerce') / 1000
-            break
-        time.sleep(0.5)
+        try:
+            res = requests.get(url, headers=headers, timeout=20)
+            if res.status_code == 200 and "data" in res.json():
+                data = res.json()["data"]
+                fields = res.json()["fields"]
+                df_raw = pd.DataFrame(data, columns=fields)
+                df_raw.columns = df_raw.columns.str.strip()
+                
+                # 安全模糊搜尋欄位，不使用固定強取以免結構改變
+                fi_cols = [c for c in df_raw.columns if '外資' in c and '買賣超' in c]
+                it_cols = [c for c in df_raw.columns if '投信' in c and '買賣超' in c]
+                
+                if fi_cols and it_cols and '證券代號' in df_raw.columns:
+                    fi_col = fi_cols[0]
+                    it_col = it_cols[0]
+                    df_chips['code'] = df_raw['證券代號'].astype(str).str.strip()
+                    df_chips['fi'] = pd.to_numeric(df_raw[fi_col].str.replace(',', ''), errors='coerce') / 1000
+                    df_chips['it'] = pd.to_numeric(df_raw[it_col].str.replace(',', ''), errors='coerce') / 1000
+                    break  # 成功撈到一筆完整的就收工
+        except Exception:
+            pass  # 如果這天出錯就順延到前一天
+        time.sleep(0.3)
 
     if df_price.empty or df_chips.empty:
         return pd.DataFrame()
@@ -99,7 +112,7 @@ try:
         df = get_stock_base_data()
     
     if df.empty:
-        st.warning("暫時無法取得證交所資料，請確認開盤日或稍後再試。")
+        st.warning("暫時無法從證交所取得完整資料，請檢查網路連線或非交易日限制。")
     else:
         st.sidebar.header("🎯 基礎篩選條件")
         min_p = st.sidebar.number_input("最低股價", value=0.0)
@@ -133,7 +146,7 @@ try:
         if target_industry != "全部":
             res = res[res['industry'] == target_industry]
             
-        # 🛡️ 欄位防禦性安全初始化：確保不論任何分支或空值發生，所有目標欄位絕對存在
+        # 🛡️ 核心安全防護欄位初始化
         res['回檔%'] = 0.0
         res['今日漲幅%'] = 0.0
         res['支撐力道'] = "🔹 觀察中"
@@ -142,7 +155,7 @@ try:
         dd_dict = {}
         chg_dict = {}
         
-        # 2. ⚡ 矩陣運算核心（全面防禦與降維兼容升級） ⚡
+        # 2. ⚡ 矩陣運算核心（全面升級為 Layout-Independent 智能元組掃描器） ⚡
         if not res.empty and (enable_drawdown or enable_strong):
             with st.spinner(f"正在以矩陣加速模式分析 {len(res)} 檔股票的即時技術指標..."):
                 valid_codes = res['code'].astype(str).str.strip().tolist()
@@ -152,30 +165,21 @@ try:
                     hist_data = yf.download(ticker_list, period="1mo", threads=True, progress=False)
                     
                     if not hist_data.empty:
-                        # 初始化用於運算的乾淨單層 DataFrame
                         close_df = pd.DataFrame(index=hist_data.index, columns=valid_codes, dtype=float)
                         high_df = pd.DataFrame(index=hist_data.index, columns=valid_codes, dtype=float)
                         
-                        # A. 處理多檔股票回傳的 MultiIndex 結構
+                        # A. 針對 MultiIndex 多證券傳回結構的終極動態掃描器
                         if isinstance(hist_data.columns, pd.MultiIndex):
                             for col in hist_data.columns:
-                                metric = None
-                                code = None
-                                for item in col:
-                                    item_str = str(item).strip()
-                                    if item_str in ['Close', 'High']:
-                                        metric = item_str
-                                    elem_clean = item_str.replace('.TW', '')
-                                    if elem_clean in valid_codes:
-                                        code = elem_clean
+                                metric = next((str(item).strip() for item in col if str(item).strip() in ['Close', 'High']), None)
+                                code = next((str(item).replace('.TW', '').strip() for item in col if str(item).replace('.TW', '').strip() in valid_codes), None)
                                 
-                                if metric and code:
-                                    if metric == 'Close':
-                                        close_df[code] = hist_data[col]
-                                    elif metric == 'High':
-                                        high_df[code] = hist_data[col]
+                                if metric == 'Close' and code:
+                                    close_df[code] = hist_data[col]
+                                elif metric == 'High' and code:
+                                    high_df[code] = hist_data[col]
                                         
-                        # B. 處理單檔股票降維回傳的普通單層 Index 結構
+                        # B. 針對單一證券降維後的常規單層 Index 結構
                         else:
                             if 'Close' in hist_data.columns and 'High' in hist_data.columns:
                                 single_code = valid_codes[0]
@@ -195,9 +199,54 @@ try:
                             last_close = close_df.iloc[-1]
                             prev_close = close_df.iloc[-2]
                             
-                            # 完美的純單層代號向量序列計算
                             drawdown_series = ((max_high - last_close) / max_high * 100).round(2)
                             change_series = ((last_close - prev_close) / prev_close * 100).round(2)
                             
                             dd_dict = drawdown_series.to_dict()
-                            chg_dict = change_series.to_
+                            chg_dict = change_series.to_dict()
+                            
+                            res['回檔%'] = res['code'].astype(str).str.strip().map(dd_dict).fillna(0.0)
+                            res['今日漲幅%'] = res['code'].astype(str).str.strip().map(chg_dict).fillna(0.0)
+                                
+                except Exception as e:
+                    st.sidebar.warning(f"技術指標載入提示: {e}")
+
+        # 3. 策略過濾門檻
+        if not res.empty and (enable_drawdown or enable_strong):
+            if enable_drawdown:
+                if dynamic_threshold:
+                    cond_large = (res['value_billion'] >= 5.0) & (res['chip_ratio'] >= 2.5)
+                    cond_small = (res['value_billion'] < 5.0) & (res['chip_ratio'] >= 5.0)
+                    res = res[(cond_large | cond_small).fillna(False)]
+                if support_mode == "單日爆發強勢型":
+                    res = res[(res['chip_ratio'] >= 5.0).fillna(False)]
+                res = res[(res['回檔%'] >= min_dd).fillna(False)]
+                if support_mode == "波段洗刷接貨型":
+                    res = res[(res['回檔%'] >= max(8.0, float(min_dd))).fillna(False)]
+                    
+            if enable_strong:
+                res = res[(res['今日漲幅%'] >= min_change).fillna(False)]
+
+        # 4. 排序與計算力道標籤
+        def judge_support_strength(row):
+            if row['chip_ratio'] >= 10.0: return "🔥 極強支撐"
+            elif row['chip_ratio'] >= 5.0: return "✅ 健康買盤"
+            else: return "🔹 觀察中"
+            
+        if not res.empty:
+            res['支撐力道'] = res.apply(judge_support_strength, axis=1)
+            if enable_strong:
+                res = res.sort_values(by='今日漲幅%', ascending=False)
+            else:
+                res = res.sort_values(by=['chip_ratio', '回檔%'], ascending=[False, False])
+
+        res['K線連結'] = res['code'].apply(lambda x: f"https://tw.stock.yahoo.com/quote/{x}")
+        
+        # 5. 🏷️ 熱門 ETF 成分股標籤資料庫
+        etf_db = {
+            "2330": ["0050", "00919", "00929"], "2317": ["0050", "00919", "00929"], 
+            "2454": ["0050", "0056", "00878", "00919", "00929", "00940"], "2308": ["0050", "00929"], 
+            "3711": ["0050", "0056", "00878", "00919"], "2303": ["0050", "0056", "00878", "00919", "00929", "00940"],
+            "2881": ["0050", "00878", "00919", "00940"], "2882": ["0050", "00878", "00919"], 
+            "2891": ["0050", "0056", "00878", "00919", "00940"], "2382": ["0050", "0056", "00878", "00919", "00940"], 
+            "2886":
