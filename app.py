@@ -21,9 +21,8 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
-st.markdown("### 📊 台股籌碼選股與強勢族群偵測")
+st.markdown("### 📊 台股多元策略選股系統")
 
-# 1. 抓取證交所基本資料、本益比、產業別、籌碼
 @st.cache_data(ttl=3600)
 def get_stock_base_data():
     url_price = "https://openapi.twse.com.tw/v1/exchangeReport/STOCK_DAY_ALL"
@@ -82,8 +81,6 @@ def get_stock_base_data():
     df['value_billion'] = (df['trade_value'] / 100000000).round(2)
     return df
 
-# 2. 透過 yfinance 取得回檔率與今日漲幅
-# 這裡修改讓它回傳一個字典，包含回檔與今日漲幅
 @st.cache_data(ttl=3600)
 def get_technical_data(code):
     try:
@@ -91,15 +88,10 @@ def get_technical_data(code):
         if not hist.empty and len(hist) >= 2:
             high_1m = hist['High'].max()
             current = hist['Close'].iloc[-1]
-            prev_close = hist['Close'].iloc[-2] # 昨天收盤價
+            prev_close = hist['Close'].iloc[-2]
             
-            drawdown = 0.0
-            if high_1m > 0:
-                drawdown = round(((high_1m - current) / high_1m) * 100, 2)
-                
-            change_pct = 0.0
-            if prev_close > 0:
-                change_pct = round(((current - prev_close) / prev_close) * 100, 2)
+            drawdown = round(((high_1m - current) / high_1m) * 100, 2) if high_1m > 0 else 0.0
+            change_pct = round(((current - prev_close) / prev_close) * 100, 2) if prev_close > 0 else 0.0
                 
             return {'回檔%': drawdown, '今日漲幅%': change_pct}
     except:
@@ -113,30 +105,34 @@ try:
     if df.empty:
         st.warning("暫時無法取得證交所資料，請確認開盤日或稍後再試。")
     else:
+        # --- 側邊欄改版 ---
         st.sidebar.header("🎯 基礎篩選條件")
         min_p = st.sidebar.number_input("最低股價", value=0.0)
         max_p = st.sidebar.number_input("最高股價", value=500.0)
         min_v = st.sidebar.number_input("最低成交量(張)", value=1000)
         max_pe = st.sidebar.number_input("最高本益比 (0為不限)", value=30.0)
         
-        st.sidebar.header("🔥 尋找強勢族群")
         target_industry = st.sidebar.selectbox("篩選特定產業", ["全部"] + sorted(list(df['industry'].dropna().unique())))
         
-        st.sidebar.header("🛡️ 進階篩選設定")
-        apply_lei_rules = st.sidebar.checkbox("是否套用雷老闆實務心法篩選", value=True)
+        # 🎯 策略大分流
+        st.sidebar.header("🧠 策略核心選擇")
+        strategy = st.sidebar.selectbox(
+            "選擇選股策略",
+            ["純基礎條件", "雷老闆回檔心法", "影片強勢族群群聚"]
+        )
         
-        if apply_lei_rules:
-            support_mode = st.sidebar.selectbox(
-                "└ 籌碼支撐型態",
-                ["全部符合", "單日爆發強勢型 (集中度>5%)", "波段洗刷接貨型 (高回檔+法人守穩)"]
-            )
-            dynamic_threshold = st.sidebar.checkbox(
-                "└ 啟用股本規模動態門檻調整", 
-                value=True
-            )
+        # 根據不同策略顯示不同參數
+        min_dd = 0.0
+        min_change = -99.0
+        
+        if strategy == "雷老闆回檔心法":
+            support_mode = st.sidebar.selectbox("└ 籌碼支撐型態", ["全部符合", "單日爆發強勢型", "波段洗刷接貨型"])
+            dynamic_threshold = st.sidebar.checkbox("└ 啟用股本規模動態門檻調整", value=True)
             min_dd = st.sidebar.slider("└ 最低回檔幅度(%)", 0, 50, 5)
+        elif strategy == "影片強勢族群群聚":
+            min_change = st.sidebar.slider("└ 最低今日漲幅(%) [建議 5% 以上]", -10, 10, 5)
         
-        # 基礎過濾
+        # 執行基礎過濾
         res = df[(df['price'] >= min_p) & (df['price'] <= max_p) & (df['vol'] >= min_v)].copy()
         if max_pe > 0:
             res = res[(res['pe'] > 0) & (res['pe'] <= max_pe)]
@@ -144,87 +140,70 @@ try:
         if target_industry != "全部":
             res = res[res['industry'] == target_industry]
             
-        # 籌碼與技術面過濾
-        if apply_lei_rules:
-            if dynamic_threshold:
-                cond_large = (res['value_billion'] >= 5.0) & (res['chip_ratio'] >= 2.5)
-                cond_small = (res['value_billion'] < 5.0) & (res['chip_ratio'] >= 5.0)
-                res = res[cond_large | cond_small]
-                
-            if support_mode == "單日爆發強勢型 (集中度>5%)":
-                res = res[res['chip_ratio'] >= 5.0]
-                
-            if not res.empty:
-                with st.spinner(f"正在分析 {len(res)} 檔目標個股的歷史回檔與今日漲幅..."):
-                    # 將回傳的字典拆解成兩個欄位
-                    tech_data = res['code'].apply(get_technical_data).apply(pd.Series)
-                    res = pd.concat([res, tech_data], axis=1)
-                
+        # 執行策略過濾
+        if not res.empty:
+            with st.spinner(f"正在透過 Yahoo Finance 計算 {len(res)} 檔股票的即時技術指標..."):
+                tech_data = res['code'].apply(get_technical_data).apply(pd.Series)
+                res = pd.concat([res, tech_data], axis=1)
+            
+            # 分流過濾邏輯
+            if strategy == "雷老闆回檔心法":
+                if dynamic_threshold:
+                    cond_large = (res['value_billion'] >= 5.0) & (res['chip_ratio'] >= 2.5)
+                    cond_small = (res['value_billion'] < 5.0) & (res['chip_ratio'] >= 5.0)
+                    res = res[cond_large | cond_small]
+                if support_mode == "單日爆發強勢型":
+                    res = res[res['chip_ratio'] >= 5.0]
                 res = res[res['回檔%'] >= min_dd]
-                
-                if support_mode == "波段洗刷接貨型 (高回檔+法人守穩)":
+                if support_mode == "波段洗刷接貨型":
                     res = res[res['回檔%'] >= max(8.0, min_dd)]
-            else:
-                res['回檔%'] = pd.Series(dtype=float)
-                res['今日漲幅%'] = pd.Series(dtype=float)
-
-            def judge_support_strength(row):
-                if row['chip_ratio'] >= 10.0:
-                    return "🔥 極強支撐 (單日爆發)"
-                elif row['chip_ratio'] >= 5.0:
-                    return "✅ 健康買盤 (強勢股)"
-                elif row['value_billion'] >= 5.0 and row['chip_ratio'] >= 2.5:
-                    return "🏛️ 大型股法人撐盤"
-                else:
-                    return "🔹 弱支撐/觀察中"
-
-            if not res.empty:
-                res['支撐力道'] = res.apply(judge_support_strength, axis=1)
-                res = res.sort_values(by=['chip_ratio', '回檔%'], ascending=[False, False])
-            else:
-                res['支撐力道'] = pd.Series(dtype=str)
-                
+                    
+            elif strategy == "影片強勢族群群聚":
+                res = res[res['今日漲幅%'] >= min_change]
         else:
-            res['回檔%'] = 0.0
-            res['今日漲幅%'] = 0.0
-            res['支撐力道'] = "未啟用心法"
-            if not res.empty:
-                res = res.sort_values(by='chip_ratio', ascending=False)
+            res['回檔%'] = pd.Series(dtype=float)
+            res['今日漲幅%'] = pd.Series(dtype=float)
+
+        # 支撐力道標籤
+        def judge_support_strength(row):
+            if row['chip_ratio'] >= 10.0: return "🔥 極強支撐"
+            elif row['chip_ratio'] >= 5.0: return "✅ 健康買盤"
+            else: return "🔹 觀察中"
+            
+        if not res.empty:
+            res['支撐力道'] = res.apply(judge_support_strength, axis=1)
+            # 排序邏輯分流：強勢策略優先排漲幅，回檔策略優先排集中度
+            if strategy == "影片強勢族群群聚":
+                res = res.sort_values(by='今日漲幅%', ascending=False)
+            else:
+                res = res.sort_values(by=['chip_ratio', '回檔%'], ascending=[False, False])
+        else:
+            res['支撐力道'] = pd.Series(dtype=str)
 
         res['K線連結'] = res['code'].apply(lambda x: f"https://tw.stock.yahoo.com/quote/{x}")
         
         display_df = res.rename(columns={
-            'code': '代號', 
-            'name': '名稱', 
-            'industry': '產業',
-            'price': '股價', 
-            'chip_ratio': '集中度%', 
-            'pe': '本益比',
-            'value_billion': '成交額(億)'
+            'code': '代號', 'name': '名稱', 'industry': '產業', 'price': '股價', 
+            'chip_ratio': '集中度%', 'pe': '本益比', 'value_billion': '成交額(億)'
         })
         
-        # --- 新增：強勢族群偵測與顯示區塊 ---
-        st.success(f"🎯 篩選完畢，最終符合條件：{len(display_df)} 檔")
+        st.success(f"🎯 策略：【{strategy}】｜ 最終符合條件：{len(display_df)} 檔")
         
+        # 族群共振看板 (獨立觸發)
         if not display_df.empty and '今日漲幅%' in display_df.columns:
-            # 找出漲幅 > 7% 的強勢股 (接近漲停)
-            strong_stocks = display_df[display_df['今日漲幅%'] >= 7.0]
+            strong_stocks = display_df[display_df['今日漲幅%'] >= 5.0]
             if not strong_stocks.empty:
-                # 統計各產業有幾檔強勢股
                 industry_counts = strong_stocks['產業'].value_counts()
-                # 挑出數量大於等於 2 的產業 (代表族群發動)
                 hot_industries = industry_counts[industry_counts >= 2]
                 
                 if not hot_industries.empty:
-                    st.info("🚨 **發現族群共振！以下產業出現多檔強勢股 (漲幅>7%)：**")
-                    cols = st.columns(len(hot_industries))
+                    st.info("🚨 **發現族群共振！以下產業出現多檔大漲股：**")
+                    cols = st.columns(min(len(hot_industries), 5))
                     for i, (ind, count) in enumerate(hot_industries.items()):
-                        with cols[i]:
-                            st.metric(label=f"🔥 {ind}", value=f"{count} 檔強勢")
-                else:
-                    st.caption("今日符合條件的股票中，暫無明顯同產業超過2檔齊飆的族群現象。")
+                        if i < 5:
+                            with cols[i]:
+                                st.metric(label=f"🔥 {ind}", value=f"{count} 檔強勢")
 
-        # 顯示資料表 (加上今日漲幅欄位)
         st.dataframe(
             display_df[['代號', '名稱', '產業', '今日漲幅%', '股價', '回檔%', '集中度%', '支撐力道', '成交額(億)', '本益比', 'K線連結']],
             column_config={
