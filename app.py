@@ -9,6 +9,52 @@ import yfinance as yf
 st.set_page_config(page_title="StockTool", layout="wide")
 st.markdown("### 📊 台股籌碼選股")
 
+# 注入自訂 CSS，讓手機版的卡片排版更精美，並徹底消滅橫向滾動
+st.markdown("""
+<style>
+    div[data-testid="stVerticalBlock"] > div:has(div.stock-card) {
+        padding: 0px;
+    }
+    .stock-card {
+        background-color: #f8f9fa;
+        border-left: 5px solid #ff4b4b;
+        border-radius: 8px;
+        padding: 12px 16px;
+        margin-bottom: 12px;
+        box-shadow: 0 2px 4px rgba(0,0,0,0.05);
+    }
+    html[data-theme="dark"] .stock-card {
+        background-color: #1e222b;
+        border-left: 5px solid #ff4b4b;
+    }
+    .stock-title {
+        font-size: 18px;
+        font-weight: bold;
+        margin-bottom: 6px;
+    }
+    .stock-metrics {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 12px;
+        margin-bottom: 8px;
+        font-size: 14px;
+    }
+    .metric-item {
+        background: rgba(0,0,0,0.03);
+        padding: 4px 8px;
+        border-radius: 4px;
+    }
+    html[data-theme="dark"] .metric-item {
+        background: rgba(255,255,255,0.05);
+    }
+    .stock-badge {
+        font-weight: bold;
+        font-size: 14px;
+        margin-bottom: 8px;
+    }
+</style>
+""", unsafe_allow_html=True)
+
 # 快取功能 1：抓取證交所基本與籌碼資料 (每小時更新一次)
 @st.cache_data(ttl=3600)
 def get_stock_base_data():
@@ -132,13 +178,13 @@ try:
 
             def judge_support_strength(row):
                 if row['chip_ratio'] >= 10.0:
-                    return "🔥強爆發"
+                    return "🔥 極強支撐 (籌碼單日大爆發)"
                 elif row['chip_ratio'] >= 5.0:
-                    return "✅健康買"
+                    return "✅ 健康買盤 (強勢守穩股)"
                 elif row['value_billion'] >= 5.0 and row['chip_ratio'] >= 2.5:
-                    return "🏛️法人撐"
+                    return "🏛️ 大型股法人出資撐盤"
                 else:
-                    return "🔹觀察中"
+                    return "🔹 籌碼中性/觀察中"
 
             if not res.empty:
                 res['支撐力道'] = res.apply(judge_support_strength, axis=1)
@@ -148,35 +194,38 @@ try:
                 
         else:
             res['回檔%'] = 0.0
-            res['支撐力道'] = "未啟用"
+            res['支撐力道'] = "未啟用心法篩選"
             if not res.empty:
                 res = res.sort_values(by='chip_ratio', ascending=False)
 
-        # 為了手機寬度優化：將「代號」與「名稱」合併為一欄，省下大量空間！
-        res['股票'] = res['code'] + " " + res['name']
-        res['K線連結'] = res['code'].apply(lambda x: f"https://tw.stock.yahoo.com/quote/{x}")
+        # 輸出統計結果
+        st.success(f"🎯 篩選完畢，最終符合條件：{len(res)} 檔")
         
-        display_df = res.rename(columns={
-            'price': '股價', 
-            'chip_ratio': '集中度%', 
-        })
-        
-        # 畫面頂部輸出統計
-        st.success(f"🎯 符合條件：{len(display_df)} 檔")
-        
-        # 【核心修改點】只留精華 5 欄，完美契合手機螢幕寬度，完全免左右滑動
-        st.dataframe(
-            display_df[['股票', '股價', '回檔%', '集中度%', 'K線連結']],
-            column_config={
-                "股票": st.column_config.TextColumn("股票", width="medium"),
-                "股價": st.column_config.NumberColumn("股價", format="%.1f", width="small"),
-                "回檔%": st.column_config.NumberColumn("回檔", format="%.0f%%", width="small"),
-                "集中度%": st.column_config.NumberColumn("集中", format="%.0f%%", width="small"),
-                "K線連結": st.column_config.LinkColumn("👉", display_text="📈看盤", width="small")
-            },
-            use_container_width=True,
-            hide_index=True
-        )
+        # --- 【高規格手機排版優化】改用直覺下滑卡片流 ---
+        if res.empty:
+            st.info("無符合當前條件的股票，請調整左側篩選標準。")
+        else:
+            for idx, row in res.iterrows():
+                # 建立一個獨立精美的 HTML 卡片，把支撐力道、回檔、成交額全部清晰展現
+                card_html = f"""
+                <div class="stock-card">
+                    <div class="stock-title">📈 {row['code']} {row['name']}</div>
+                    <div class="stock-badge">📊 進場參考：{row['支撐力道']}</div>
+                    <div class="stock-metrics">
+                        <div class="metric-item">💰 股價: <b>{row['price']:.2f}元</b></div>
+                        <div class="metric-item">📉 回檔幅度: <b>{row['回檔%']:.1f}%</b></div>
+                        <div class="metric-item">🎯 籌碼集中度: <b>{row['chip_ratio']:.2f}%</b></div>
+                        <div class="metric-item">💎 成交額: <b>{row['value_billion']:.1f}億</b></div>
+                        <div class="metric-item">⏳ PE: <b>{row['pe'] if pd.notna(row['pe']) else '--'}</b></div>
+                    </div>
+                </div>
+                """
+                st.markdown(card_html, unsafe_allow_html=True)
+                
+                # 在卡片下方緊接著放一塊超好按的大按鈕，點擊直接看 Yahoo K 線
+                yahoo_url = f"https://tw.stock.yahoo.com/quote/{row['code']}"
+                st.link_button(f"查看 {row['name']} 詳細 K 線圖", url=yahoo_url, use_container_width=True)
+                st.markdown("---") # 分隔線
 
 except Exception as e:
     st.error(f"程式發生錯誤: {e}")
