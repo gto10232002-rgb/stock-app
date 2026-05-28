@@ -133,43 +133,46 @@ try:
         if target_industry != "全部":
             res = res[res['industry'] == target_industry]
             
-        # 2. ⚡ 升級為高效能批次下載模式 ⚡
+        # 2. ⚡ 完全向量化高速批次下載與運算模式 (大幅提高搜尋速度) ⚡
         if not res.empty:
             if enable_drawdown or enable_strong:
-                with st.spinner(f"正在以批次加速模式分析 {len(res)} 檔股票的即時技術指標..."):
+                with st.spinner(f"正在以矩陣加速模式分析 {len(res)} 檔股票的即時技術指標..."):
                     ticker_list = [f"{str(c).strip()}.TW" for c in res['code']]
                     try:
-                        # 一口氣打包下載所有股票資料，避免被 Yahoo 鎖 IP
                         hist_data = yf.download(ticker_list, period="1mo", progress=False)
                         
-                        drawdown_map = {}
-                        change_map = {}
+                        dd_dict = {}
+                        chg_dict = {}
                         
-                        for code in res['code']:
-                            tk = f"{code}.TW"
-                            dd, chg = 0.0, 0.0
-                            try:
-                                if isinstance(hist_data.columns, pd.MultiIndex):
-                                    if tk in hist_data['Close'].columns:
-                                        closes = hist_data['Close'][tk].dropna()
-                                        highs = hist_data['High'][tk].dropna()
-                                else:
-                                    closes = hist_data['Close'].dropna()
-                                    highs = hist_data['High'].dropna()
+                        # 判定 yfinance 回傳的多股 MultiIndex 結構
+                        if isinstance(hist_data.columns, pd.MultiIndex):
+                            if 'High' in hist_data.columns.levels[0] and 'Close' in hist_data.columns.levels[0]:
+                                max_highs = hist_data['High'].max()
+                                last_closes = hist_data['Close'].iloc[-1] if len(hist_data) >= 1 else pd.Series(dtype=float)
+                                prev_closes = hist_data['Close'].iloc[-2] if len(hist_data) >= 2 else pd.Series(dtype=float)
+                                
+                                # 使用高速記憶體映射，完全取代緩慢的 pandas 切片迴圈
+                                for tk in max_highs.index:
+                                    code_clean = tk.split('.')[0]
+                                    h = max_highs[tk]
+                                    c = last_closes.get(tk, 0.0)
+                                    p = prev_closes.get(tk, 0.0)
                                     
-                                if len(closes) >= 2:
-                                    high_1m = highs.max()
-                                    current = closes.iloc[-1]
-                                    prev_close = closes.iloc[-2]
-                                    dd = round(((high_1m - current) / high_1m) * 100, 2) if high_1m > 0 else 0.0
-                                    chg = round(((current - prev_close) / prev_close) * 100, 2) if prev_close > 0 else 0.0
-                            except:
-                                pass
-                            drawdown_map[code] = dd
-                            change_map[code] = chg
-                            
-                        res['回檔%'] = res['code'].map(drawdown_map)
-                        res['今日漲幅%'] = res['code'].map(change_map)
+                                    dd_dict[code_clean] = round(((h - c) / h) * 100, 2) if h > 0 else 0.0
+                                    chg_dict[code_clean] = round(((c - p) / p) * 100, 2) if p > 0 else 0.0
+                        else:
+                            # 單一檔股票回傳時的扁平結構處理
+                            if 'High' in hist_data.columns and 'Close' in hist_data.columns:
+                                max_high = hist_data['High'].max()
+                                last_close = hist_data['Close'].iloc[-1] if len(hist_data) >= 1 else 0.0
+                                prev_close = hist_data['Close'].iloc[-2] if len(hist_data) >= 2 else 0.0
+                                
+                                code_clean = str(res['code'].iloc[0]).strip()
+                                dd_dict[code_clean] = round(((max_high - last_close) / max_high) * 100, 2) if max_high > 0 else 0.0
+                                chg_dict[code_clean] = round(((last_close - prev_close) / prev_close) * 100, 2) if prev_close > 0 else 0.0
+                                
+                        res['回檔%'] = res['code'].map(dd_dict).fillna(0.0)
+                        res['今日漲幅%'] = res['code'].map(chg_dict).fillna(0.0)
                     except Exception as e:
                         st.error(f"Yahoo Finance 批次連線異常: {e}")
                         res['回檔%'] = 0.0
@@ -214,6 +217,56 @@ try:
 
         res['K線連結'] = res['code'].apply(lambda x: f"https://tw.stock.yahoo.com/quote/{x}")
         
+        # 5. 🏷️ 建立熱門 ETF 成分股對照表並整合至名稱欄位
+        etf_db = {
+            "2330": ["0050", "00919", "00929"], "2317": ["0050", "00919", "00929"], 
+            "2454": ["0050", "0056", "00878", "00919", "00929", "00940"], "2308": ["0050", "00929"], 
+            "3711": ["0050", "0056", "00878", "00919"], "2303": ["0050", "0056", "00878", "00919", "00929", "00940"],
+            "2881": ["0050", "00878", "00919", "00940"], "2882": ["0050", "00878", "00919"], 
+            "2891": ["0050", "0056", "00878", "00919", "00940"], "2382": ["0050", "0056", "00878", "00919", "00940"], 
+            "2886": ["0050", "00878"], "3008": ["0050", "00919", "00929"], "2884": ["0050"], 
+            "2885": ["0050", "00878", "00940"], "2892": ["0050", "00940"], 
+            "2357": ["0050", "0056", "00878", "00919", "00929", "00940"], "3231": ["0050", "0056", "00878", "00929"], 
+            "1216": ["0050", "0056", "00878", "00940"], "2412": ["0050", "00878"], "1301": ["0050"], 
+            "1303": ["0050"], "2603": ["0050", "0056", "00878", "00919", "00940"], "3037": ["0050"],
+            "2301": ["0050", "0056", "00878", "00929"], "4904": ["0050", "00878"], "2327": ["0050", "00919"], 
+            "3045": ["0050", "00878", "00940"], "2408": ["0050"], "2449": ["0050", "0056", "00878"], 
+            "2345": ["0050"], "2395": ["0050"], "2360": ["0050"], "2368": ["0050"], "3017": ["0050"], 
+            "2383": ["0050"], "2207": ["0050"], "6669": ["0050"], "3653": ["0050"], "3661": ["0050"], 
+            "2002": ["0050"], "5880": ["0050"], "2880": ["0050", "0056", "00878"], "2883": ["0050", "00940"],
+            "2890": ["0050", "00940"], "6505": ["0050"], "6919": ["0050"], "7769": ["0050"], 
+            "2059": ["0050"], "2344": ["0050"], "2376": ["0056", "00878"], 
+            "2324": ["0056", "00878", "00919", "00929", "00940"], 
+            "2356": ["0056", "00878", "00940"], "2385": ["0056", "00940"], 
+            "3034": ["0056", "00878", "00919", "00929", "00940"], "3702": ["0056", "00940"],
+            "4938": ["0056", "00929", "00940"], "3293": ["0056", "00878", "00940"], 
+            "2474": ["0056", "00878", "00940"], "3005": ["0056", "00940"], "2379": ["0056", "00878", "00940"], 
+            "2404": ["0056", "00919", "00929", "00940"], "6121": ["0056"], 
+            "2618": ["0056", "00878", "00919", "00940"], "5347": ["0056", "00878", "00919"],
+            "3044": ["0056", "00929", "00940"], "2610": ["0056", "00940"], "3036": ["0056", "00929", "00940"],
+            "1504": ["0056", "00940"], "2312": ["0056", "00940"], "2458": ["0056", "00940"], 
+            "3042": ["0056", "00940"], "5469": ["0056", "00940"], "6278": ["0056", "00940"], 
+            "2915": ["0056", "00940"], "8069": ["0056", "00940"], "3023": ["0056", "00940"], 
+            "2421": ["0056", "00940"], "6414": ["0056", "00940"], "3406": ["0056", "00919", "00940"],
+            "2439": ["0056", "00940"], "6188": ["0056", "00940"], "6285": ["0056", "00940"], 
+            "8016": ["0056", "00940"], "6139": ["0056", "00940"], "5269": ["0056", "00940"], 
+            "6196": ["0056", "00940"], "6239": ["0056", "00919", "00929", "00940"], "4958": ["00878", "00919"], 
+            "1402": ["00878"], "2912": ["00878", "00940"], "2609": ["00919"], "8209": ["00919"],
+            "6488": ["00929", "00940"], "2801": ["00940"], "9904": ["00940"], "1102": ["00940"], 
+            "4915": ["00940"], "2615": ["00940"], "1319": ["00940"], "3706": ["00940"], 
+            "6176": ["00940"], "1513": ["00940"], "2393": ["00940"], "6257": ["00940"]
+        }
+
+        def merge_etf_info(row):
+            c = str(row['code']).strip()
+            n = str(row['name']).strip()
+            if c in etf_db:
+                return f"{n} ({','.join(etf_db[c])})"
+            return n
+
+        if not res.empty:
+            res['name'] = res.apply(merge_etf_info, axis=1)
+
         display_df = res.rename(columns={
             'code': '代號', 'name': '名稱', 'industry': '產業', 'price': '股價', 
             'chip_ratio': '集中度%', 'pe': '本益比', 'value_billion': '成交額(億)'
