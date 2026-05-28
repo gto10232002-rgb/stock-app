@@ -118,26 +118,17 @@ def get_stock_base_data():
     except:
         return pd.DataFrame()
 
-# 【終極防禦性優化】嚴格阻擋 yfinance 返回非預期型態導致的噴錯
-@st.cache_data(ttl=3600)
-def get_single_drawdown(code):
+# 獲取單檔股票回檔率的基礎核心
+def fetch_drawdown_safe(clean_code):
     try:
-        clean_code = str(code).strip()
-        if not clean_code or len(clean_code) != 4:
-            return 0.0
-            
-        # 爬取一個月歷史走勢
         ticker = yf.Ticker(f"{clean_code}.TW")
         hist = ticker.history(period="1mo")
-        
-        # 嚴格檢查返回的歷史資料格式
-        if hist is not None and not hist.empty and 'High' in hist.columns and 'Close' in hist.columns:
+        if hist is not None and not hist.empty:
             high_1m = float(hist['High'].max())
             current = float(hist['Close'].iloc[-1])
             if high_1m > 0:
                 return round(((high_1m - current) / high_1m) * 100, 2)
-    except Exception as e:
-        # 即使出錯也絕對安全返回 0.0，不讓主程式崩潰
+    except:
         pass
     return 0.0
 
@@ -193,12 +184,20 @@ try:
             if support_mode == "單日爆發強勢型 (集中度>5%)":
                 res = res[res['chip_ratio'] >= 5.0]
                 
-            # 3. 安全計算一個月回檔率
+            # 3. 【核心修正點】用最安全的迴圈方式取代 .apply()，徹底隔離 yfinance 的任何內部錯誤
             if not res.empty:
+                drawdown_list = []
                 with st.spinner(f"正在分析 {len(res)} 檔目標個股的歷史回檔波動..."):
-                    # 透過安全函數進行對映，保證不噴出任何非 iterable 錯誤
-                    res['回檔%'] = res['code'].apply(lambda x: get_single_drawdown(x))
+                    for code_val in res['code']:
+                        # 雙重防禦外殼：即使呼叫函數噴出任何不可預期的型態錯誤，外層也能完美接住
+                        try:
+                            clean_c = str(code_val).strip()
+                            dd_res = fetch_drawdown_safe(clean_c)
+                            drawdown_list.append(dd_res)
+                        except BaseException:
+                            drawdown_list.append(0.0)
                 
+                res['回檔%'] = drawdown_list
                 res = res[res['回檔%'] >= min_dd]
                 
                 if support_mode == "波段洗刷接貨型 (高回檔+法人守穩)":
@@ -235,7 +234,7 @@ try:
         # 顯示最終結果數量
         st.success(f"🎯 篩選完畢，最終符合條件：{len(res)} 檔")
         
-        # --- 第三階段：特製手機端 HTML 表格輸出 ---
+        # --- 第三階段：特製手機端 HTML 表格輸出（支援一體化橫向比對） ---
         if res.empty:
             st.info("無符合當前條件的股票，請調整左側篩選標準。")
         else:
@@ -256,7 +255,6 @@ try:
             
             for idx, row in res.iterrows():
                 yahoo_url = f"https://tw.stock.yahoo.com/quote/{row['code']}"
-                # 確保數值型態正確
                 price_val = row['price'] if pd.notna(row['price']) else 0.0
                 dd_val = row['回檔%'] if pd.notna(row['回檔%']) else 0.0
                 chip_val = row['chip_ratio'] if pd.notna(row['chip_ratio']) else 0.0
