@@ -7,13 +7,29 @@ import yfinance as yf
 
 # 頁面配置
 st.set_page_config(page_title="StockTool", layout="wide")
-# 根據需求：拿掉括號標題，維持乾淨主標
+
+# 🎯 【修改點 1】注入 CSS：消滅頂部無效空白、縮緊標題間距
+st.markdown("""
+<style>
+    /* 縮小整頁頂部與底部的邊距 */
+    .block-container {
+        padding-top: 1.2rem !important;
+        padding-bottom: 0rem !important;
+    }
+    /* 讓主標題緊貼頂部 */
+    h3 {
+        margin-top: 0rem !important;
+        margin-bottom: 0.4rem !important;
+    }
+</style>
+""", unsafe_allow_html=True)
+
+# 保持乾淨主標
 st.markdown("### 📊 台股籌碼選股")
 
 # 快取功能 1：抓取證交所基本與籌碼資料 (每小時更新一次)
 @st.cache_data(ttl=3600)
 def get_stock_base_data():
-    # 1. 下載股價與今日成交金額
     url_price = "https://openapi.twse.com.tw/v1/exchangeReport/STOCK_DAY_ALL"
     res_price = requests.get(url_price, timeout=20)
     df_price = pd.DataFrame()
@@ -25,7 +41,6 @@ def get_stock_base_data():
         df_price['trade_value'] = pd.to_numeric(raw_price['TradeValue'].str.replace(',', ''), errors='coerce')
         df_price = df_price[['Code', 'Name', 'price', 'vol', 'trade_value']].rename(columns={'Code': 'code', 'Name': 'name'})
 
-    # 2. 下載基本面 (本益比)
     url_pe = "https://openapi.twse.com.tw/v1/exchangeReport/BWIBBU_ALL"
     res_pe = requests.get(url_pe, timeout=20)
     df_pe = pd.DataFrame()
@@ -34,7 +49,6 @@ def get_stock_base_data():
         df_pe = raw_pe[['Code', 'PEratio']].rename(columns={'Code': 'code', 'PEratio': 'pe'})
         df_pe['pe'] = pd.to_numeric(df_pe['pe'].str.replace(',', ''), errors='coerce')
 
-    # 3. 下載籌碼
     df_chips = pd.DataFrame()
     headers = {'User-Agent': 'Mozilla/5.0'}
     for i in range(7):
@@ -54,7 +68,6 @@ def get_stock_base_data():
             break
         time.sleep(0.5)
 
-    # 4. 合併基本資料
     if df_price.empty or df_chips.empty:
         return pd.DataFrame()
         
@@ -93,11 +106,9 @@ try:
         min_v = st.sidebar.number_input("最低成交量(張)", value=1000)
         max_pe = st.sidebar.number_input("最高本益比 (0為不限)", value=30.0)
         
-        # 根據需求：側邊欄新增總開關
         st.sidebar.header("🛡️ 進階篩選設定")
         apply_lei_rules = st.sidebar.checkbox("是否套用雷老闆實務心法篩選", value=True)
         
-        # 如果開啟總開關，才顯示子選單
         if apply_lei_rules:
             support_mode = st.sidebar.selectbox(
                 "└ 籌碼支撐型態",
@@ -117,17 +128,14 @@ try:
             
         # --- 第二階段：根據總開關決定是否套用籌碼與回檔心法 ---
         if apply_lei_rules:
-            # 1. 動態門檻判定
             if dynamic_threshold:
                 cond_large = (res['value_billion'] >= 5.0) & (res['chip_ratio'] >= 2.5)
                 cond_small = (res['value_billion'] < 5.0) & (res['chip_ratio'] >= 5.0)
                 res = res[cond_large | cond_small]
                 
-            # 2. 支撐型態過濾
             if support_mode == "單日爆發強勢型 (集中度>5%)":
                 res = res[res['chip_ratio'] >= 5.0]
                 
-            # 3. 計算一個月回檔率 (有開啟心法才去爬歷史資料)
             if not res.empty:
                 with st.spinner(f"正在分析 {len(res)} 檔目標個股的歷史回檔波動..."):
                     res['回檔%'] = res['code'].apply(get_single_drawdown)
@@ -139,7 +147,6 @@ try:
             else:
                 res['回檔%'] = pd.Series(dtype=float)
 
-            # 4. 標記實務支撐力道標籤
             def judge_support_strength(row):
                 if row['chip_ratio'] >= 10.0:
                     return "🔥 極強支撐 (單日爆發)"
@@ -157,7 +164,6 @@ try:
                 res['支撐力道'] = pd.Series(dtype=str)
                 
         else:
-            # 如果【未啟用】心法篩選：不篩選籌碼與回檔，給予預設標記，並依集中度排序
             res['回檔%'] = 0.0
             res['支撐力道'] = "未啟用心法"
             if not res.empty:
@@ -175,9 +181,9 @@ try:
             'value_billion': '成交額(億)'
         })
         
-        # 畫面頂部輸出統計與最終大表格
         st.success(f"🎯 篩選完畢，最終符合條件：{len(display_df)} 檔")
         
+        # 🎯 【修改點 2】在大表格最下方新增 height=650，強迫表格向下伸展、吃掉空白
         st.dataframe(
             display_df[['代號', '名稱', '股價', '回檔%', '集中度%', '支撐力道', '成交額(億)', '本益比', 'K線連結']],
             column_config={
@@ -189,7 +195,8 @@ try:
                 "K線連結": st.column_config.LinkColumn("K線", display_text="📈查看")
             },
             use_container_width=True,
-            hide_index=True
+            hide_index=True,
+            height=650  # <-- 加上這一行，中間資料區立刻放大！
         )
 
 except Exception as e:
