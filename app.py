@@ -63,7 +63,7 @@ def get_stock_base_data():
     df['value_billion'] = (df['trade_value'] / 100000000).round(2)
     return df
 
-# 快取功能 2：獨立快取每檔股票的 yfinance 回檔率，避免重複下載導致網頁卡死
+# 快取功能 2：獨立快取每檔股票的 yfinance 回檔率
 @st.cache_data(ttl=3600)
 def get_single_drawdown(code):
     try:
@@ -79,11 +79,14 @@ def get_single_drawdown(code):
 
 # --- 主程式區塊 ---
 try:
-    df = get_stock_base_data()
+    # 使用 spinner 包裝初始載入，載入完自動隱藏
+    with st.spinner("正在從小鎮與證交所同步最新籌碼數據..."):
+        df = get_stock_base_data()
     
     if df.empty:
         st.warning("暫時無法取得證交所資料，請確認開盤日或稍後再試。")
     else:
+        # 側邊欄配置
         st.sidebar.header("🎯 基礎篩選條件")
         min_p = st.sidebar.number_input("最低股價", value=0.0)
         max_p = st.sidebar.number_input("最高股價", value=500.0)
@@ -99,7 +102,7 @@ try:
         dynamic_threshold = st.sidebar.checkbox(
             "3. 啟用股本規模動態門檻調整", 
             value=True,
-            help="【實務觀念3】大型股(當日成交額>5億)門檻自動調降至2.5%；中小型股維持5.0%"
+            help="大型股(當日成交額>5億)門檻自動調降至2.5%；中小型股維持5.0%"
         )
         
         min_dd = st.sidebar.slider("最低回檔幅度(%)", 0, 50, 5, help="尋找股價從一個月內高點修正下來的幅度")
@@ -109,25 +112,25 @@ try:
         if max_pe > 0:
             res = res[(res['pe'] > 0) & (res['pe'] <= max_pe)]
             
-        # --- 第二階段：動態門檻判定 (實務第3點) ---
+        # --- 第二階段：動態門檻判定 ---
         if dynamic_threshold:
             cond_large = (res['value_billion'] >= 5.0) & (res['chip_ratio'] >= 2.5)
             cond_small = (res['value_billion'] < 5.0) & (res['chip_ratio'] >= 5.0)
             res = res[cond_large | cond_small]
             
-        # --- 第三階段：支撐型態過濾 (實務第1&2點) ---
+        # --- 第三階段：支撐型態過濾 ---
         if support_mode == "單日爆發強勢型 (集中度>5%)":
             res = res[res['chip_ratio'] >= 5.0]
             
-        # --- 第四階段：計算一個月回檔率 (呼叫帶有快取的 yfinance 函數) ---
+        # --- 第四階段：計算一個月回檔率 (使用 spinner，計算完畢自動不留痕跡消失) ---
         if not res.empty:
-            # 使用獨立快取計算回檔率，拉動拉桿時不會重複下載、不卡頓
-            res['回檔%'] = res['code'].apply(get_single_drawdown)
+            with st.spinner(f"正在分析 {len(res)} 檔目標個股的歷史回檔波動..."):
+                res['回檔%'] = res['code'].apply(get_single_drawdown)
             
             # 執行回檔率篩選
             res = res[res['回檔%'] >= min_dd]
             
-            # 若選擇波段洗刷型，強烈要求基本回檔幅度
+            # 若選擇波段洗刷型，要求基本回檔幅度
             if support_mode == "波段洗刷接貨型 (高回檔+法人守穩)":
                 res = res[res['回檔%'] >= max(8.0, min_dd)]
         else:
@@ -150,7 +153,7 @@ try:
         else:
             res['支撐力道'] = pd.Series(dtype=str)
 
-        # 建立 Yahoo K線連結 (回復您最習慣的簡潔結構)
+        # 建立 Yahoo K線連結
         res['K線連結'] = res['code'].apply(lambda x: f"https://tw.stock.yahoo.com/quote/{x}")
         
         display_df = res.rename(columns={
@@ -162,9 +165,9 @@ try:
             'value_billion': '成交額(億)'
         })
         
-        st.write(f"🎯 經過雷老闆實務心法過濾，最終符合條件：{len(display_df)} 檔")
+        # 畫面頂部直接輸出統計與最終大表格（無任何殘留文字阻擋）
+        st.success(f"🎯 經過雷老闆實務心法過濾，最終符合條件：{len(display_df)} 檔")
         
-        # 輸出大表格
         st.dataframe(
             display_df[['代號', '名稱', '股價', '回檔%', '集中度%', '支撐力道', '成交額(億)', '本益比', 'K線連結']],
             column_config={
