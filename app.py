@@ -94,23 +94,6 @@ def get_stock_base_data():
     df['value_billion'] = (df['trade_value'] / 100000000).round(2)
     return df
 
-@st.cache_data(ttl=3600)
-def get_technical_data(code):
-    try:
-        hist = yf.Ticker(f"{code}.TW").history(period="1mo")
-        if not hist.empty and len(hist) >= 2:
-            high_1m = hist['High'].max()
-            current = hist['Close'].iloc[-1]
-            prev_close = hist['Close'].iloc[-2]
-            
-            drawdown = round(((high_1m - current) / high_1m) * 100, 2) if high_1m > 0 else 0.0
-            change_pct = round(((current - prev_close) / prev_close) * 100, 2) if prev_close > 0 else 0.0
-                
-            return {'回檔%': drawdown, '今日漲幅%': change_pct}
-    except:
-        pass
-    return {'回檔%': 0.0, '今日漲幅%': 0.0}
-
 try:
     with st.spinner("正在同步最新籌碼與產業數據..."):
         df = get_stock_base_data()
@@ -118,7 +101,6 @@ try:
     if df.empty:
         st.warning("暫時無法取得證交所資料，請確認開盤日或稍後再試。")
     else:
-        # --- 側邊欄改版：純勾選模式與繁體化名稱 ---
         st.sidebar.header("🎯 基礎篩選條件")
         min_p = st.sidebar.number_input("最低股價", value=0.0)
         max_p = st.sidebar.number_input("最高股價", value=500.0)
@@ -128,7 +110,6 @@ try:
         target_industry = st.sidebar.selectbox("篩選特定產業", ["全部"] + sorted(list(df['industry'].dropna().unique())))
         
         st.sidebar.header("🧠 進階策略加選")
-        # 精確更換名稱並轉為繁體「開啟」
         enable_drawdown = st.sidebar.checkbox("開啟「回檔策略」", value=False)
         enable_strong = st.sidebar.checkbox("開啟「近期強勢群組」", value=False)
         
@@ -152,26 +133,47 @@ try:
         if target_industry != "全部":
             res = res[res['industry'] == target_industry]
             
-        # 2. 只有在至少勾選一個進階策略時，才去向 Yahoo Finance 抓技術指標
+        # 2. ⚡ 升級為高效能批次下載模式 ⚡
         if not res.empty:
             if enable_drawdown or enable_strong:
-                with st.spinner(f"正在分析 {len(res)} 檔股票的即時技術指標..."):
-                    tech_data = res['code'].apply(get_technical_data).apply(pd.Series)
-                    res = pd.concat([res, tech_data], axis=1)
-                
-                if enable_drawdown:
-                    if dynamic_threshold:
-                        cond_large = (res['value_billion'] >= 5.0) & (res['chip_ratio'] >= 2.5)
-                        cond_small = (res['value_billion'] < 5.0) & (res['chip_ratio'] >= 5.0)
-                        res = res[cond_large | cond_small]
-                    if support_mode == "單日爆發強勢型":
-                        res = res[res['chip_ratio'] >= 5.0]
-                    res = res[res['回檔%'] >= min_dd]
-                    if support_mode == "波段洗刷接貨型":
-                        res = res[res['回檔%'] >= max(8.0, min_dd)]
+                with st.spinner(f"正在以批次加速模式分析 {len(res)} 檔股票的即時技術指標..."):
+                    ticker_list = [f"{str(c).strip()}.TW" for c in res['code']]
+                    try:
+                        # 一口氣打包下載所有股票資料，避免被 Yahoo 鎖 IP
+                        hist_data = yf.download(ticker_list, period="1mo", progress=False)
                         
-                if enable_strong:
-                    res = res[res['今日漲幅%'] >= min_change]
+                        drawdown_map = {}
+                        change_map = {}
+                        
+                        for code in res['code']:
+                            tk = f"{code}.TW"
+                            dd, chg = 0.0, 0.0
+                            try:
+                                if isinstance(hist_data.columns, pd.MultiIndex):
+                                    if tk in hist_data['Close'].columns:
+                                        closes = hist_data['Close'][tk].dropna()
+                                        highs = hist_data['High'][tk].dropna()
+                                else:
+                                    closes = hist_data['Close'].dropna()
+                                    highs = hist_data['High'].dropna()
+                                    
+                                if len(closes) >= 2:
+                                    high_1m = highs.max()
+                                    current = closes.iloc[-1]
+                                    prev_close = closes.iloc[-2]
+                                    dd = round(((high_1m - current) / high_1m) * 100, 2) if high_1m > 0 else 0.0
+                                    chg = round(((current - prev_close) / prev_close) * 100, 2) if prev_close > 0 else 0.0
+                            except:
+                                pass
+                            drawdown_map[code] = dd
+                            change_map[code] = chg
+                            
+                        res['回檔%'] = res['code'].map(drawdown_map)
+                        res['今日漲幅%'] = res['code'].map(change_map)
+                    except Exception as e:
+                        st.error(f"Yahoo Finance 批次連線異常: {e}")
+                        res['回檔%'] = 0.0
+                        res['今日漲幅%'] = 0.0
             else:
                 res['回檔%'] = 0.0
                 res['今日漲幅%'] = 0.0
@@ -179,7 +181,23 @@ try:
             res['回檔%'] = pd.Series(dtype=float)
             res['今日漲幅%'] = pd.Series(dtype=float)
 
-        # 3. 計算支撐力道標籤
+        # 3. 篩選策略過濾
+        if not res.empty and (enable_drawdown or enable_strong):
+            if enable_drawdown:
+                if dynamic_threshold:
+                    cond_large = (res['value_billion'] >= 5.0) & (res['chip_ratio'] >= 2.5)
+                    cond_small = (res['value_billion'] < 5.0) & (res['chip_ratio'] >= 5.0)
+                    res = res[cond_large | cond_small]
+                if support_mode == "單日爆發強勢型":
+                    res = res[res['chip_ratio'] >= 5.0]
+                res = res[res['回檔%'] >= min_dd]
+                if support_mode == "波段洗刷接貨型":
+                    res = res[res['回檔%'] >= max(8.0, min_dd)]
+                    
+            if enable_strong:
+                res = res[res['今日漲幅%'] >= min_change]
+
+        # 4. 計算支撐力道標籤與排序
         def judge_support_strength(row):
             if row['chip_ratio'] >= 10.0: return "🔥 極強支撐"
             elif row['chip_ratio'] >= 5.0: return "✅ 健康買盤"
