@@ -7,125 +7,71 @@ import yfinance as yf
 
 # 頁面配置
 st.set_page_config(page_title="StockTool", layout="wide")
+# 根據需求：拿掉括號標題，維持乾淨主標
 st.markdown("### 📊 台股籌碼選股")
-
-# 注入特製的手機行動端網頁表格 CSS
-st.markdown("""
-<style>
-    .phone-table-container {
-        width: 100%;
-        overflow-x: hidden;
-        margin-top: 10px;
-    }
-    .phone-table {
-        width: 100%;
-        border-collapse: collapse;
-        font-size: 14px;
-    }
-    .phone-table th {
-        background-color: #f1f3f5;
-        color: #333;
-        font-weight: bold;
-        text-align: left;
-        padding: 8px 6px;
-        border-bottom: 2px solid #dee2e6;
-    }
-    .phone-table td {
-        padding: 10px 6px;
-        border-bottom: 1px solid #dee2e6;
-        vertical-align: middle;
-    }
-    html[data-theme="dark"] .phone-table th {
-        background-color: #262730;
-        color: #eee;
-        border-bottom: 2px solid #464855;
-    }
-    html[data-theme="dark"] .phone-table td {
-        border-bottom: 1px solid #464855;
-    }
-    .stock-link {
-        color: #ff4b4b;
-        text-decoration: none;
-        font-weight: bold;
-        display: block;
-    }
-    .badge {
-        display: inline-block;
-        padding: 2px 6px;
-        font-size: 11px;
-        font-weight: bold;
-        border-radius: 4px;
-        color: white;
-        white-space: nowrap;
-    }
-    .badge-danger { background-color: #dc3545; }
-    .badge-success { background-color: #28a745; }
-    .badge-info { background-color: #17a2b8; }
-    .badge-secondary { background-color: #6c757d; }
-</style>
-""", unsafe_allow_html=True)
 
 # 快取功能 1：抓取證交所基本與籌碼資料 (每小時更新一次)
 @st.cache_data(ttl=3600)
 def get_stock_base_data():
-    try:
-        url_price = "https://openapi.twse.com.tw/v1/exchangeReport/STOCK_DAY_ALL"
-        res_price = requests.get(url_price, timeout=20)
-        df_price = pd.DataFrame()
-        if res_price.status_code == 200:
-            raw_price = pd.DataFrame(res_price.json())
-            df_price = raw_price[raw_price['Code'].str.len() == 4].copy()
-            df_price['price'] = pd.to_numeric(df_price['ClosingPrice'].str.replace(',', ''), errors='coerce')
-            df_price['vol'] = pd.to_numeric(df_price['TradeVolume'].str.replace(',', ''), errors='coerce') / 1000
-            df_price['trade_value'] = pd.to_numeric(raw_price['TradeValue'].str.replace(',', ''), errors='coerce')
-            df_price = df_price[['Code', 'Name', 'price', 'vol', 'trade_value']].rename(columns={'Code': 'code', 'Name': 'name'})
+    # 1. 下載股價與今日成交金額
+    url_price = "https://openapi.twse.com.tw/v1/exchangeReport/STOCK_DAY_ALL"
+    res_price = requests.get(url_price, timeout=20)
+    df_price = pd.DataFrame()
+    if res_price.status_code == 200:
+        raw_price = pd.DataFrame(res_price.json())
+        df_price = raw_price[raw_price['Code'].str.len() == 4].copy()
+        df_price['price'] = pd.to_numeric(df_price['ClosingPrice'].str.replace(',', ''), errors='coerce')
+        df_price['vol'] = pd.to_numeric(df_price['TradeVolume'].str.replace(',', ''), errors='coerce') / 1000
+        df_price['trade_value'] = pd.to_numeric(raw_price['TradeValue'].str.replace(',', ''), errors='coerce')
+        df_price = df_price[['Code', 'Name', 'price', 'vol', 'trade_value']].rename(columns={'Code': 'code', 'Name': 'name'})
 
-        url_pe = "https://openapi.twse.com.tw/v1/exchangeReport/BWIBBU_ALL"
-        res_pe = requests.get(url_pe, timeout=20)
-        df_pe = pd.DataFrame()
-        if res_pe.status_code == 200:
-            raw_pe = pd.DataFrame(res_pe.json())
-            df_pe = raw_pe[['Code', 'PEratio']].rename(columns={'Code': 'code', 'PEratio': 'pe'})
-            df_pe['pe'] = pd.to_numeric(df_pe['pe'].str.replace(',', ''), errors='coerce')
+    # 2. 下載基本面 (本益比)
+    url_pe = "https://openapi.twse.com.tw/v1/exchangeReport/BWIBBU_ALL"
+    res_pe = requests.get(url_pe, timeout=20)
+    df_pe = pd.DataFrame()
+    if res_pe.status_code == 200:
+        raw_pe = pd.DataFrame(res_pe.json())
+        df_pe = raw_pe[['Code', 'PEratio']].rename(columns={'Code': 'code', 'PEratio': 'pe'})
+        df_pe['pe'] = pd.to_numeric(df_pe['pe'].str.replace(',', ''), errors='coerce')
 
-        df_chips = pd.DataFrame()
-        headers = {'User-Agent': 'Mozilla/5.0'}
-        for i in range(7):
-            date_str = (datetime.datetime.now() - datetime.timedelta(days=i)).strftime("%Y%m%d")
-            url = f"https://www.twse.com.tw/rwd/zh/fund/T86?date={date_str}&selectType=ALLBUT0999&response=json"
-            res = requests.get(url, headers=headers, timeout=20)
-            if res.status_code == 200 and "data" in res.json():
-                data = res.json()["data"]
-                fields = res.json()["fields"]
-                df_raw = pd.DataFrame(data, columns=fields)
-                df_raw.columns = df_raw.columns.str.strip()
-                fi_col = [c for c in df_raw.columns if '外資' in c and '買賣超股數' in c][0]
-                it_col = [c for c in df_raw.columns if '投信' in c and '買賣超股數' in c][0]
-                df_chips['code'] = df_raw['證券代號'].astype(str).str.strip()
-                df_chips['fi'] = pd.to_numeric(df_raw[fi_col].str.replace(',', ''), errors='coerce') / 1000
-                df_chips['it'] = pd.to_numeric(df_raw[it_col].str.replace(',', ''), errors='coerce') / 1000
-                break
-            time.sleep(0.5)
+    # 3. 下載籌碼
+    df_chips = pd.DataFrame()
+    headers = {'User-Agent': 'Mozilla/5.0'}
+    for i in range(7):
+        date_str = (datetime.datetime.now() - datetime.timedelta(days=i)).strftime("%Y%m%d")
+        url = f"https://www.twse.com.tw/rwd/zh/fund/T86?date={date_str}&selectType=ALLBUT0999&response=json"
+        res = requests.get(url, headers=headers, timeout=20)
+        if res.status_code == 200 and "data" in res.json():
+            data = res.json()["data"]
+            fields = res.json()["fields"]
+            df_raw = pd.DataFrame(data, columns=fields)
+            df_raw.columns = df_raw.columns.str.strip()
+            fi_col = [c for c in df_raw.columns if '外資' in c and '買賣超股數' in c][0]
+            it_col = [c for c in df_raw.columns if '投信' in c and '買賣超股數' in c][0]
+            df_chips['code'] = df_raw['證券代號'].astype(str).str.strip()
+            df_chips['fi'] = pd.to_numeric(df_raw[fi_col].str.replace(',', ''), errors='coerce') / 1000
+            df_chips['it'] = pd.to_numeric(df_raw[it_col].str.replace(',', ''), errors='coerce') / 1000
+            break
+        time.sleep(0.5)
 
-        if df_price.empty or df_chips.empty:
-            return pd.DataFrame()
-            
-        df = pd.merge(df_price, df_chips, on='code', how='inner')
-        df = pd.merge(df, df_pe, on='code', how='left')
-        df['chip_ratio'] = ((df['fi'] + df['it']) / df['vol'] * 100).round(2)
-        df['value_billion'] = (df['trade_value'] / 100000000).round(2)
-        return df
-    except:
+    # 4. 合併基本資料
+    if df_price.empty or df_chips.empty:
         return pd.DataFrame()
+        
+    df = pd.merge(df_price, df_chips, on='code', how='inner')
+    df = pd.merge(df, df_pe, on='code', how='left')
+    df['chip_ratio'] = ((df['fi'] + df['it']) / df['vol'] * 100).round(2)
+    df['value_billion'] = (df['trade_value'] / 100000000).round(2)
+    return df
 
-# 獲取單檔股票回檔率的基礎核心
-def fetch_drawdown_safe(clean_code):
+# 快取功能 2：獨立快取每檔股票的 yfinance 回檔率
+@st.cache_data(ttl=3600)
+def get_single_drawdown(code):
     try:
-        ticker = yf.Ticker(f"{clean_code}.TW")
-        hist = ticker.history(period="1mo")
-        if hist is not None and not hist.empty:
-            high_1m = float(hist['High'].max())
-            current = float(hist['Close'].iloc[-1])
+        hist = yf.Ticker(f"{code}.TW").history(period="1mo")
+        if not hist.empty:
+            high_1m = hist['High'].max()
+            current = hist['Close'].iloc[-1]
             if high_1m > 0:
                 return round(((high_1m - current) / high_1m) * 100, 2)
     except:
@@ -147,15 +93,11 @@ try:
         min_v = st.sidebar.number_input("最低成交量(張)", value=1000)
         max_pe = st.sidebar.number_input("最高本益比 (0為不限)", value=30.0)
         
-        # 進階篩選設定
+        # 根據需求：側邊欄新增總開關
         st.sidebar.header("🛡️ 進階篩選設定")
         apply_lei_rules = st.sidebar.checkbox("是否套用雷老闆實務心法篩選", value=True)
         
-        # 預設基本控制變數
-        support_mode = "全部符合"
-        dynamic_threshold = True
-        min_dd = 5
-        
+        # 如果開啟總開關，才顯示子選單
         if apply_lei_rules:
             support_mode = st.sidebar.selectbox(
                 "└ 籌碼支撐型態",
@@ -163,7 +105,8 @@ try:
             )
             dynamic_threshold = st.sidebar.checkbox(
                 "└ 啟用股本規模動態門檻調整", 
-                value=True
+                value=True,
+                help="大型股(成交額>5億)門檻自動調降至2.5%；中小型股維持5.0%"
             )
             min_dd = st.sidebar.slider("└ 最低回檔幅度(%)", 0, 50, 5)
         
@@ -172,8 +115,8 @@ try:
         if max_pe > 0:
             res = res[(res['pe'] > 0) & (res['pe'] <= max_pe)]
             
-        # --- 第二階段：心法條件篩選 ---
-        if apply_lei_rules and not res.empty:
+        # --- 第二階段：根據總開關決定是否套用籌碼與回檔心法 ---
+        if apply_lei_rules:
             # 1. 動態門檻判定
             if dynamic_threshold:
                 cond_large = (res['value_billion'] >= 5.0) & (res['chip_ratio'] >= 2.5)
@@ -184,100 +127,70 @@ try:
             if support_mode == "單日爆發強勢型 (集中度>5%)":
                 res = res[res['chip_ratio'] >= 5.0]
                 
-            # 3. 【核心修正點】用最安全的迴圈方式取代 .apply()，徹底隔離 yfinance 的任何內部錯誤
+            # 3. 計算一個月回檔率 (有開啟心法才去爬歷史資料)
             if not res.empty:
-                drawdown_list = []
                 with st.spinner(f"正在分析 {len(res)} 檔目標個股的歷史回檔波動..."):
-                    for code_val in res['code']:
-                        # 雙重防禦外殼：即使呼叫函數噴出任何不可預期的型態錯誤，外層也能完美接住
-                        try:
-                            clean_c = str(code_val).strip()
-                            dd_res = fetch_drawdown_safe(clean_c)
-                            drawdown_list.append(dd_res)
-                        except BaseException:
-                            drawdown_list.append(0.0)
+                    res['回檔%'] = res['code'].apply(get_single_drawdown)
                 
-                res['回檔%'] = drawdown_list
                 res = res[res['回檔%'] >= min_dd]
                 
                 if support_mode == "波段洗刷接貨型 (高回檔+法人守穩)":
                     res = res[res['回檔%'] >= max(8.0, min_dd)]
             else:
-                res['回檔%'] = 0.0
+                res['回檔%'] = pd.Series(dtype=float)
 
-            # 4. 建立支撐力道標籤
+            # 4. 標記實務支撐力道標籤
             def judge_support_strength(row):
-                try:
-                    if row['chip_ratio'] >= 10.0:
-                        return '<span class="badge badge-danger">🔥強爆發</span>'
-                    elif row['chip_ratio'] >= 5.0:
-                        return '<span class="badge badge-success">✅健康買</span>'
-                    elif row['value_billion'] >= 5.0 and row['chip_ratio'] >= 2.5:
-                        return '<span class="badge badge-info">🏛️法人撐</span>'
-                except:
-                    pass
-                return '<span class="badge badge-secondary">觀察中</span>'
+                if row['chip_ratio'] >= 10.0:
+                    return "🔥 極強支撐 (單日爆發)"
+                elif row['chip_ratio'] >= 5.0:
+                    return "✅ 健康買盤 (強勢股)"
+                elif row['value_billion'] >= 5.0 and row['chip_ratio'] >= 2.5:
+                    return "🏛️ 大型股法人撐盤"
+                else:
+                    return "🔹 弱支撐/觀察中"
 
             if not res.empty:
                 res['支撐力道'] = res.apply(judge_support_strength, axis=1)
                 res = res.sort_values(by=['chip_ratio', '回檔%'], ascending=[False, False])
             else:
-                res['支撐力道'] = '<span class="badge badge-secondary">觀察中</span>'
+                res['支撐力道'] = pd.Series(dtype=str)
                 
         else:
-            # 未啟用心法篩選
+            # 如果【未啟用】心法篩選：不篩選籌碼與回檔，給予預設標記，並依集中度排序
             res['回檔%'] = 0.0
-            res['支撐力道'] = '<span class="badge badge-secondary">未啟用</span>'
+            res['支撐力道'] = "未啟用心法"
             if not res.empty:
                 res = res.sort_values(by='chip_ratio', ascending=False)
 
-        # 顯示最終結果數量
-        st.success(f"🎯 篩選完畢，最終符合條件：{len(res)} 檔")
+        # 建立 Yahoo K線連結
+        res['K線連結'] = res['code'].apply(lambda x: f"https://tw.stock.yahoo.com/quote/{x}")
         
-        # --- 第三階段：特製手機端 HTML 表格輸出（支援一體化橫向比對） ---
-        if res.empty:
-            st.info("無符合當前條件的股票，請調整左側篩選標準。")
-        else:
-            table_html = """
-            <div class="phone-table-container">
-                <table class="phone-table">
-                    <thead>
-                        <tr>
-                            <th style="width: 28%;">股票</th>
-                            <th style="width: 18%;">現價</th>
-                            <th style="width: 18%;">回檔</th>
-                            <th style="width: 18%;">集中</th>
-                            <th style="width: 20%;">支撐力道</th>
-                        </tr>
-                    </thead>
-                    <tbody>
-            """
-            
-            for idx, row in res.iterrows():
-                yahoo_url = f"https://tw.stock.yahoo.com/quote/{row['code']}"
-                price_val = row['price'] if pd.notna(row['price']) else 0.0
-                dd_val = row['回檔%'] if pd.notna(row['回檔%']) else 0.0
-                chip_val = row['chip_ratio'] if pd.notna(row['chip_ratio']) else 0.0
-                support_val = row['支撐力道'] if pd.notna(row['支撐力道']) else '<span class="badge badge-secondary">觀察中</span>'
-                
-                table_html += f"""
-                        <tr>
-                            <td>
-                                <a class="stock-link" href="{yahoo_url}" target="_blank">{row['code']}<br><span style="font-size:12px;color:#666;">{row['name']}</span></a>
-                            </td>
-                            <td><b>{price_val:.1f}</b></td>
-                            <td>{dd_val:.1f}%</td>
-                            <td>{chip_val:.1f}%</td>
-                            <td>{support_val}</td>
-                        </tr>
-                """
-            
-            table_html += """
-                    </tbody>
-                </table>
-            </div>
-            """
-            st.markdown(table_html, unsafe_allow_html=True)
+        display_df = res.rename(columns={
+            'code': '代號', 
+            'name': '名稱', 
+            'price': '股價', 
+            'chip_ratio': '集中度%', 
+            'pe': '本益比',
+            'value_billion': '成交額(億)'
+        })
+        
+        # 畫面頂部輸出統計與最終大表格
+        st.success(f"🎯 篩選完畢，最終符合條件：{len(display_df)} 檔")
+        
+        st.dataframe(
+            display_df[['代號', '名稱', '股價', '回檔%', '集中度%', '支撐力道', '成交額(億)', '本益比', 'K線連結']],
+            column_config={
+                "股價": st.column_config.NumberColumn(format="%.2f"),
+                "回檔%": st.column_config.NumberColumn(format="%.2f %%"),
+                "集中度%": st.column_config.NumberColumn(format="%.2f %%"),
+                "成交額(億)": st.column_config.NumberColumn(format="%.2f 億"),
+                "本益比": st.column_config.NumberColumn(format="%.2f"),
+                "K線連結": st.column_config.LinkColumn("K線", display_text="📈查看")
+            },
+            use_container_width=True,
+            hide_index=True
+        )
 
-except Exception as main_err:
-    st.error(f"系統核心發生非預期錯誤: {main_err}")
+except Exception as e:
+    st.error(f"程式發生錯誤: {e}")
