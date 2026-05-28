@@ -133,78 +133,71 @@ try:
         if target_industry != "全部":
             res = res[res['industry'] == target_industry]
             
+        # 🛡️ 欄位防禦性安全初始化：確保不論任何分支或空值發生，所有目標欄位絕對存在
+        res['回檔%'] = 0.0
+        res['今日漲幅%'] = 0.0
+        res['支撐力道'] = "🔹 觀察中"
+        res['K線連結'] = ""
+        
         dd_dict = {}
         chg_dict = {}
         
-        # 2. ⚡ 究極加速：完全向量化矩陣運算模式（全版本結構免疫型） ⚡
+        # 2. ⚡ 矩陣運算核心（全面防禦與降維兼容升級） ⚡
         if not res.empty and (enable_drawdown or enable_strong):
             with st.spinner(f"正在以矩陣加速模式分析 {len(res)} 檔股票的即時技術指標..."):
-                ticker_list = [f"{str(c).strip()}.TW" for c in res['code']]
+                valid_codes = res['code'].astype(str).str.strip().tolist()
+                ticker_list = [f"{c}.TW" for c in valid_codes]
+                
                 try:
                     hist_data = yf.download(ticker_list, period="1mo", threads=True, progress=False)
                     
                     if not hist_data.empty:
-                        close_df = pd.DataFrame()
-                        high_df = pd.DataFrame()
+                        # 初始化用於運算的乾淨單層 DataFrame
+                        close_df = pd.DataFrame(index=hist_data.index, columns=valid_codes, dtype=float)
+                        high_df = pd.DataFrame(index=hist_data.index, columns=valid_codes, dtype=float)
                         
-                        # 處理多檔股票（不論 yf 吐出幾層 MultiIndex，直接用元組特徵暴力扁平化）
+                        # A. 處理多檔股票回傳的 MultiIndex 結構
                         if isinstance(hist_data.columns, pd.MultiIndex):
-                            close_series_dict = {}
-                            high_series_dict = {}
                             for col in hist_data.columns:
-                                ticker = None
                                 metric = None
+                                code = None
                                 for item in col:
                                     item_str = str(item).strip()
                                     if item_str in ['Close', 'High']:
                                         metric = item_str
-                                    elif item_str.endswith('.TW'):
-                                        ticker = item_str.split('.')[0]
+                                    elem_clean = item_str.replace('.TW', '')
+                                    if elem_clean in valid_codes:
+                                        code = elem_clean
                                 
-                                if ticker and metric:
+                                if metric and code:
                                     if metric == 'Close':
-                                        close_series_dict[ticker] = hist_data[col]
+                                        close_df[code] = hist_data[col]
                                     elif metric == 'High':
-                                        high_series_dict[ticker] = hist_data[col]
-                            
-                            if close_series_dict and high_series_dict:
-                                close_df = pd.DataFrame(close_series_dict)
-                                high_df = pd.DataFrame(high_series_dict)
+                                        high_df[code] = hist_data[col]
+                                        
+                        # B. 處理單檔股票降維回傳的普通單層 Index 結構
                         else:
-                            # 處理單檔股票
                             if 'Close' in hist_data.columns and 'High' in hist_data.columns:
-                                code_clean = str(res['code'].iloc[0]).strip()
-                                close_df = pd.DataFrame({code_clean: hist_data['Close']})
-                                high_df = pd.DataFrame({code_clean: hist_data['High']})
+                                single_code = valid_codes[0]
+                                close_df[single_code] = hist_data['Close']
+                                high_df[single_code] = hist_data['High']
                         
-                        # 開始進行高速矩陣計算
-                        if not close_df.empty and not high_df.empty:
-                            # 剔除尾部尚未開盤的 NaN 列
-                            while len(close_df) > 0 and close_df.iloc[-1].isna().all():
-                                close_df = close_df.iloc[:-1]
-                                high_df = high_df.iloc[:-1]
+                        # 剔除尾部尚未開盤的完全空值列
+                        while len(close_df) > 0 and close_df.iloc[-1].isna().all():
+                            close_df = close_df.iloc[:-1]
+                            high_df = high_df.iloc[:-1]
                             
-                            if len(close_df) >= 2:
-                                close_df = close_df.ffill()
-                                high_df = high_df.ffill()
-                                
-                                max_high = high_df.max()
-                                last_close = close_df.iloc[-1]
-                                prev_close = close_df.iloc[-2]
-                                
-                                # 完美的純單層代號向量序列
-                                drawdown_series = ((max_high - last_close) / max_high * 100).round(2)
-                                change_series = ((last_close - prev_close) / prev_close * 100).round(2)
-                                
-                                dd_dict = drawdown_series.to_dict()
-                                chg_dict = change_series.to_dict()
-                                
-                except Exception as e:
-                    st.error(f"Yahoo Finance 批次加速模組異常: {e}")
-
-        # 將運算結果高速對齊填回 DataFrame（加上安全型態轉換）
-        res['回檔%'] = res['code'].astype(str).str.strip().map(dd_dict).fillna(0.0)
-        res['今日漲幅%'] = res['code'].astype(str).str.strip().map(chg_dict).fillna(0.0)
-
-        # 3. 篩選策略過濾
-        if
+                        if len(close_df) >= 2:
+                            close_df = close_df.ffill()
+                            high_df = high_df.ffill()
+                            
+                            max_high = high_df.max()
+                            last_close = close_df.iloc[-1]
+                            prev_close = close_df.iloc[-2]
+                            
+                            # 完美的純單層代號向量序列計算
+                            drawdown_series = ((max_high - last_close) / max_high * 100).round(2)
+                            change_series = ((last_close - prev_close) / prev_close * 100).round(2)
+                            
+                            dd_dict = drawdown_series.to_dict()
+                            chg_dict = change_series.to_
