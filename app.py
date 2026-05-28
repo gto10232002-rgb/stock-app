@@ -7,13 +7,11 @@ import yfinance as yf
 
 # 頁面配置
 st.set_page_config(page_title="StockTool", layout="wide")
-# 根據需求：拿掉括號標題，維持乾淨主標
 st.markdown("### 📊 台股籌碼選股")
 
 # 快取功能 1：抓取證交所基本與籌碼資料 (每小時更新一次)
 @st.cache_data(ttl=3600)
 def get_stock_base_data():
-    # 1. 下載股價與今日成交金額
     url_price = "https://openapi.twse.com.tw/v1/exchangeReport/STOCK_DAY_ALL"
     res_price = requests.get(url_price, timeout=20)
     df_price = pd.DataFrame()
@@ -25,7 +23,6 @@ def get_stock_base_data():
         df_price['trade_value'] = pd.to_numeric(raw_price['TradeValue'].str.replace(',', ''), errors='coerce')
         df_price = df_price[['Code', 'Name', 'price', 'vol', 'trade_value']].rename(columns={'Code': 'code', 'Name': 'name'})
 
-    # 2. 下載基本面 (本益比)
     url_pe = "https://openapi.twse.com.tw/v1/exchangeReport/BWIBBU_ALL"
     res_pe = requests.get(url_pe, timeout=20)
     df_pe = pd.DataFrame()
@@ -34,7 +31,6 @@ def get_stock_base_data():
         df_pe = raw_pe[['Code', 'PEratio']].rename(columns={'Code': 'code', 'PEratio': 'pe'})
         df_pe['pe'] = pd.to_numeric(df_pe['pe'].str.replace(',', ''), errors='coerce')
 
-    # 3. 下載籌碼
     df_chips = pd.DataFrame()
     headers = {'User-Agent': 'Mozilla/5.0'}
     for i in range(7):
@@ -54,7 +50,6 @@ def get_stock_base_data():
             break
         time.sleep(0.5)
 
-    # 4. 合併基本資料
     if df_price.empty or df_chips.empty:
         return pd.DataFrame()
         
@@ -93,11 +88,10 @@ try:
         min_v = st.sidebar.number_input("最低成交量(張)", value=1000)
         max_pe = st.sidebar.number_input("最高本益比 (0為不限)", value=30.0)
         
-        # 根據需求：側邊欄新增總開關
+        # 進階篩選設定
         st.sidebar.header("🛡️ 進階篩選設定")
         apply_lei_rules = st.sidebar.checkbox("是否套用雷老闆實務心法篩選", value=True)
         
-        # 如果開啟總開關，才顯示子選單
         if apply_lei_rules:
             support_mode = st.sidebar.selectbox(
                 "└ 籌碼支撐型態",
@@ -106,7 +100,7 @@ try:
             dynamic_threshold = st.sidebar.checkbox(
                 "└ 啟用股本規模動態門檻調整", 
                 value=True,
-                help="大型股(成交額>5億)門檻自動調降至2.5%；中小型股維持5.0%"
+                help="大型股門檻自動調降至2.5%；中小型股維持5.0%"
             )
             min_dd = st.sidebar.slider("└ 最低回檔幅度(%)", 0, 50, 5)
         
@@ -117,17 +111,14 @@ try:
             
         # --- 第二階段：根據總開關決定是否套用籌碼與回檔心法 ---
         if apply_lei_rules:
-            # 1. 動態門檻判定
             if dynamic_threshold:
                 cond_large = (res['value_billion'] >= 5.0) & (res['chip_ratio'] >= 2.5)
                 cond_small = (res['value_billion'] < 5.0) & (res['chip_ratio'] >= 5.0)
                 res = res[cond_large | cond_small]
                 
-            # 2. 支撐型態過濾
             if support_mode == "單日爆發強勢型 (集中度>5%)":
                 res = res[res['chip_ratio'] >= 5.0]
                 
-            # 3. 計算一個月回檔率 (有開啟心法才去爬歷史資料)
             if not res.empty:
                 with st.spinner(f"正在分析 {len(res)} 檔目標個股的歷史回檔波動..."):
                     res['回檔%'] = res['code'].apply(get_single_drawdown)
@@ -139,16 +130,15 @@ try:
             else:
                 res['回檔%'] = pd.Series(dtype=float)
 
-            # 4. 標記實務支撐力道標籤
             def judge_support_strength(row):
                 if row['chip_ratio'] >= 10.0:
-                    return "🔥 極強支撐 (單日爆發)"
+                    return "🔥強爆發"
                 elif row['chip_ratio'] >= 5.0:
-                    return "✅ 健康買盤 (強勢股)"
+                    return "✅健康買"
                 elif row['value_billion'] >= 5.0 and row['chip_ratio'] >= 2.5:
-                    return "🏛️ 大型股法人撐盤"
+                    return "🏛️法人撐"
                 else:
-                    return "🔹 弱支撐/觀察中"
+                    return "🔹觀察中"
 
             if not res.empty:
                 res['支撐力道'] = res.apply(judge_support_strength, axis=1)
@@ -157,36 +147,32 @@ try:
                 res['支撐力道'] = pd.Series(dtype=str)
                 
         else:
-            # 如果【未啟用】心法篩選：不篩選籌碼與回檔，給予預設標記，並依集中度排序
             res['回檔%'] = 0.0
-            res['支撐力道'] = "未啟用心法"
+            res['支撐力道'] = "未啟用"
             if not res.empty:
                 res = res.sort_values(by='chip_ratio', ascending=False)
 
-        # 建立 Yahoo K線連結
+        # 為了手機寬度優化：將「代號」與「名稱」合併為一欄，省下大量空間！
+        res['股票'] = res['code'] + " " + res['name']
         res['K線連結'] = res['code'].apply(lambda x: f"https://tw.stock.yahoo.com/quote/{x}")
         
         display_df = res.rename(columns={
-            'code': '代號', 
-            'name': '名稱', 
             'price': '股價', 
             'chip_ratio': '集中度%', 
-            'pe': '本益比',
-            'value_billion': '成交額(億)'
         })
         
-        # 畫面頂部輸出統計與最終大表格
-        st.success(f"🎯 篩選完畢，最終符合條件：{len(display_df)} 檔")
+        # 畫面頂部輸出統計
+        st.success(f"🎯 符合條件：{len(display_df)} 檔")
         
+        # 【核心修改點】只留精華 5 欄，完美契合手機螢幕寬度，完全免左右滑動
         st.dataframe(
-            display_df[['代號', '名稱', '股價', '回檔%', '集中度%', '支撐力道', '成交額(億)', '本益比', 'K線連結']],
+            display_df[['股票', '股價', '回檔%', '集中度%', 'K線連結']],
             column_config={
-                "股價": st.column_config.NumberColumn(format="%.2f"),
-                "回檔%": st.column_config.NumberColumn(format="%.2f %%"),
-                "集中度%": st.column_config.NumberColumn(format="%.2f %%"),
-                "成交額(億)": st.column_config.NumberColumn(format="%.2f 億"),
-                "本益比": st.column_config.NumberColumn(format="%.2f"),
-                "K線連結": st.column_config.LinkColumn("K線", display_text="📈查看")
+                "股票": st.column_config.TextColumn("股票", width="medium"),
+                "股價": st.column_config.NumberColumn("股價", format="%.1f", width="small"),
+                "回檔%": st.column_config.NumberColumn("回檔", format="%.0f%%", width="small"),
+                "集中度%": st.column_config.NumberColumn("集中", format="%.0f%%", width="small"),
+                "K線連結": st.column_config.LinkColumn("👉", display_text="📈看盤", width="small")
             },
             use_container_width=True,
             hide_index=True
