@@ -3,14 +3,15 @@ import pandas as pd
 import requests
 import datetime
 import time
+import yfinance as yf
 
 # 頁面配置
 st.set_page_config(page_title="StockTool", layout="wide")
-st.markdown("### 📊 台股籌碼選股")
+st.markdown("### 📊 台股籌碼選股 (雷老闆實務心法升級版)")
 
 @st.cache_data(ttl=3600)
 def get_stock_data():
-    # 下載股價
+    # 1. 下載股價與今日成交金額
     url_price = "https://openapi.twse.com.tw/v1/exchangeReport/STOCK_DAY_ALL"
     res_price = requests.get(url_price, timeout=20)
     df_price = pd.DataFrame()
@@ -19,9 +20,20 @@ def get_stock_data():
         df_price = raw_price[raw_price['Code'].str.len() == 4].copy()
         df_price['price'] = pd.to_numeric(df_price['ClosingPrice'].str.replace(',', ''), errors='coerce')
         df_price['vol'] = pd.to_numeric(df_price['TradeVolume'].str.replace(',', ''), errors='coerce') / 1000
-        df_price = df_price[['Code', 'Name', 'price', 'vol']].rename(columns={'Code': 'code', 'Name': 'name'})
+        # 實務第3點必備：取得當日總成交金額 (TWD)
+        df_price['trade_value'] = pd.to_numeric(raw_price['TradeValue'].str.replace(',', ''), errors='coerce')
+        df_price = df_price[['Code', 'Name', 'price', 'vol', 'trade_value']].rename(columns={'Code': 'code', 'Name': 'name'})
 
-    # 下載籌碼
+    # 2. 下載基本面 (本益比)
+    url_pe = "https://openapi.twse.com.tw/v1/exchangeReport/BWIBBU_ALL"
+    res_pe = requests.get(url_pe, timeout=20)
+    df_pe = pd.DataFrame()
+    if res_pe.status_code == 200:
+        raw_pe = pd.DataFrame(res_pe.json())
+        df_pe = raw_pe[['Code', 'PEratio']].rename(columns={'Code': 'code', 'PEratio': 'pe'})
+        df_pe['pe'] = pd.to_numeric(df_pe['pe'].str.replace(',', ''), errors='coerce')
+
+    # 3. 下載籌碼
     df_chips = pd.DataFrame()
     headers = {'User-Agent': 'Mozilla/5.0'}
     for i in range(7):
@@ -41,36 +53,128 @@ def get_stock_data():
             break
         time.sleep(0.5)
 
+    # 4. 合併與計算實務指標
     df = pd.merge(df_price, df_chips, on='code', how='inner')
+    df = pd.merge(df, df_pe, on='code', how='left')
     df['chip_ratio'] = ((df['fi'] + df['it']) / df['vol'] * 100).round(2)
+    # 將成交金額換算為「億元」，方便直覺判斷股本規模
+    df['value_billion'] = (df['trade_value'] / 100000000).round(2)
     return df
 
 # 主程式區塊
 try:
     df = get_stock_data()
-    st.sidebar.header("篩選條件")
+    
+    st.sidebar.header("🎯 基礎篩選條件")
     min_p = st.sidebar.number_input("最低股價", value=0.0)
-    max_p = st.sidebar.number_input("最高股價", value=100.0)
+    max_p = st.sidebar.number_input("最高股價", value=500.0)
     min_v = st.sidebar.number_input("最低成交量(張)", value=1000)
-    min_c = st.sidebar.slider("最低籌碼集中度(%)", -50, 50, 5)
+    max_pe = st.sidebar.number_input("最高本益比 (0為不限)", value=30.0)
     
-    # 執行篩選
-    res = df[(df['price'] >= min_p) & (df['price'] <= max_p) & 
-             (df['vol'] >= min_v) & (df['chip_ratio'] >= min_c)].copy()
-    res = res.sort_values(by='chip_ratio', ascending=False)
+    st.sidebar.header("🛡️ 雷老闆實務心法篩選")
+    support_mode = st.sidebar.selectbox(
+        "1&2. 籌碼支撐型態",
+        ["全部符合", "單日爆發強勢型 (集中度>5%)", "波段洗刷接貨型 (高回檔+法人守穩)"]
+    )
     
+    dynamic_threshold = st.sidebar.checkbox(
+        "3. 啟用股本規模動態門檻調整", 
+        value=True,
+        help="【實務觀念3】大型股(當日成交額>5億)門檻自動調降至2.5%；中小型股維持5.0%"
+    )
+    
+    min_dd = st.sidebar.slider("最低回檔幅度(%)", 0, 50, 5, help="尋找股價從一個月內高點修正下來的幅度")
+    
+    # --- 第一階段：基礎與基本面篩選 ---
+    res = df[(df['price'] >= min_p) & (df['price'] <= max_p) & (df['vol'] >= min_v)].copy()
+    if max_pe > 0:
+        res = res[(res['pe'] > 0) & (res['pe'] <= max_pe)]
+        
+    # --- 第二階段：動態門檻判定 (實務第3點) ---
+    if dynamic_threshold:
+        # 大型股定義：當日成交額 >= 5億，門檻 2.5%
+        cond_large = (res['value_billion'] >= 5.0) & (res['chip_ratio'] >= 2.5)
+        # 中小型股定義：當日成交額 < 5億，門檻 5.0%
+        cond_small = (res['value_billion'] < 5.0) & (res['chip_ratio'] >= 5.0)
+        res = res[cond_large | cond_small]
+    else:
+        res = res[res['chip_ratio'] >= 0] # 預設只要正向即可
+        
+    # --- 第三階段：支撐型態過濾 (實務第1&2點) ---
+    if support_mode == "單日爆發強勢型 (集中度>5%)":
+        res = res[res['chip_ratio'] >= 5.0]
+        
+    # --- 第四階段：計算一個月回檔率 (呼叫 yfinance歷史資料) ---
+    if not res.empty:
+        st.write(f"⏳ 正在計算 {len(res)} 檔股票的近一月歷史回檔率...")
+        drawdowns = []
+        progress_bar = st.progress(0)
+        
+        for i, code in enumerate(res['code']):
+            try:
+                hist = yf.Ticker(f"{code}.TW").history(period="1mo")
+                if not hist.empty:
+                    high_1m = hist['High'].max()
+                    current = hist['Close'].iloc[-1]
+                    dd = ((high_1m - current) / high_1m) * 100
+                    drawdowns.append(round(dd, 2))
+                else:
+                    drawdowns.append(0)
+            except:
+                drawdowns.append(0)
+            progress_bar.progress((i + 1) / len(res))
+            
+        res['回檔%'] = drawdowns
+        progress_bar.empty()
+        
+        # 執行回檔率篩選
+        res = res[res['回檔%'] >= min_dd]
+        
+        # 若選擇波段洗刷型，強制要求回檔必須大於 8% (實務上洗刷的基本幅度)
+        if support_mode == "波段洗刷接貨型 (高回檔+法人守穩)":
+            res = res[res['回檔%'] >= max(8.0, min_dd)]
+
+    # --- 第五階段：標記實務支撐力道標籤 ---
+    def judge_support_strength(row):
+        if row['chip_ratio'] >= 10.0:
+            return "🔥 極強支撐 (單日爆發)"
+        elif row['chip_ratio'] >= 5.0:
+            return "✅ 健康買盤 (強勢股)"
+        elif row['value_billion'] >= 5.0 and row['chip_ratio'] >= 2.5:
+            return "🏛️ 大型股法人撐盤"
+        else:
+            return "🔹 弱支撐/觀察中"
+
+    if not res.empty:
+        res['支撐力道'] = res.apply(judge_support_strength, axis=1)
+        # 依照集中度與回檔進行綜合排序
+        res = res.sort_values(by=['chip_ratio', '回檔%'], ascending=[False, False])
+    else:
+        res['支撐力道'] = pd.Series(dtype=str)
+        res['回檔%'] = pd.Series(dtype=float)
+
     # 準備顯示欄位
     res['K線連結'] = res['code'].apply(lambda x: f"https://tw.stock.yahoo.com/quote/{x}")
-    display_df = res.rename(columns={'code': '代號', 'name': '名稱', 'price': '股價', 'chip_ratio': '集中度%'})
+    display_df = res.rename(columns={
+        'code': '代號', 
+        'name': '名稱', 
+        'price': '股價', 
+        'chip_ratio': '集中度%', 
+        'pe': '本益比',
+        'value_billion': '成交額(億)'
+    })
     
-    st.write(f"📈 符合條件：{len(display_df)} 檔")
+    st.write(f"🎯 經過雷老闆實務心法過濾，最終符合條件：{len(display_df)} 檔")
     
-    # 使用 dataframe 顯示並加上連結配置
+    # 輸出表格
     st.dataframe(
-        display_df[['代號', '名稱', '股價', '集中度%', 'K線連結']],
+        display_df[['代號', '名稱', '股價', '回檔%', '集中度%', '支撐力道', '成交額(億)', '本益比', 'K線連結']],
         column_config={
             "股價": st.column_config.NumberColumn(format="%.2f"),
-            "集中度%": st.column_config.NumberColumn(format="%.2f"),
+            "回檔%": st.column_config.NumberColumn(format="%.2f %%"),
+            "集中度%": st.column_config.NumberColumn(format="%.2f %%"),
+            "成交額(億)": st.column_config.NumberColumn(format="%.2f 億"),
+            "本益比": st.column_config.NumberColumn(format="%.2f"),
             "K線連結": st.column_config.LinkColumn("K線", display_text="📈查看")
         },
         use_container_width=True,
