@@ -9,49 +9,59 @@ import yfinance as yf
 st.set_page_config(page_title="StockTool", layout="wide")
 st.markdown("### 📊 台股籌碼選股")
 
-# 注入自訂 CSS，讓手機版的卡片排版更精美，並徹底消滅橫向滾動
+# 注入特製的手機行動端網頁表格 CSS（消滅滾動條、優化字體與對照體驗）
 st.markdown("""
 <style>
-    div[data-testid="stVerticalBlock"] > div:has(div.stock-card) {
-        padding: 0px;
+    .phone-table-container {
+        width: 100%;
+        overflow-x: hidden;
+        margin-top: 10px;
     }
-    .stock-card {
-        background-color: #f8f9fa;
-        border-left: 5px solid #ff4b4b;
-        border-radius: 8px;
-        padding: 12px 16px;
-        margin-bottom: 12px;
-        box-shadow: 0 2px 4px rgba(0,0,0,0.05);
-    }
-    html[data-theme="dark"] .stock-card {
-        background-color: #1e222b;
-        border-left: 5px solid #ff4b4b;
-    }
-    .stock-title {
-        font-size: 18px;
-        font-weight: bold;
-        margin-bottom: 6px;
-    }
-    .stock-metrics {
-        display: flex;
-        flex-wrap: wrap;
-        gap: 12px;
-        margin-bottom: 8px;
+    .phone-table {
+        width: 100%;
+        border-collapse: collapse;
         font-size: 14px;
     }
-    .metric-item {
-        background: rgba(0,0,0,0.03);
-        padding: 4px 8px;
+    .phone-table th {
+        background-color: #f1f3f5;
+        color: #333;
+        font-weight: bold;
+        text-align: left;
+        padding: 8px 6px;
+        border-bottom: 2px solid #dee2e6;
+    }
+    .phone-table td {
+        padding: 10px 6px;
+        border-bottom: 1px solid #dee2e6;
+        vertical-align: middle;
+    }
+    /* 暗色模式相容 */
+    html[data-theme="dark"] .phone-table th {
+        background-color: #262730;
+        color: #eee;
+        border-bottom: 2px solid #464855;
+    }
+    html[data-theme="dark"] .phone-table td {
+        border-bottom: 1px solid #464855;
+    }
+    .stock-link {
+        color: #ff4b4b;
+        text-decoration: none;
+        font-weight: bold;
+        display: block;
+    }
+    .badge {
+        display: inline-block;
+        padding: 2px 6px;
+        font-size: 11px;
+        font-weight: bold;
         border-radius: 4px;
+        color: white;
     }
-    html[data-theme="dark"] .metric-item {
-        background: rgba(255,255,255,0.05);
-    }
-    .stock-badge {
-        font-weight: bold;
-        font-size: 14px;
-        margin-bottom: 8px;
-    }
+    .badge-danger { background-color: #dc3545; }
+    .badge-success { background-color: #28a745; }
+    .badge-info { background-color: #17a2b8; }
+    .badge-secondary { background-color: #6c757d; }
 </style>
 """, unsafe_allow_html=True)
 
@@ -145,8 +155,7 @@ try:
             )
             dynamic_threshold = st.sidebar.checkbox(
                 "└ 啟用股本規模動態門檻調整", 
-                value=True,
-                help="大型股門檻自動調降至2.5%；中小型股維持5.0%"
+                value=True
             )
             min_dd = st.sidebar.slider("└ 最低回檔幅度(%)", 0, 50, 5)
         
@@ -178,13 +187,13 @@ try:
 
             def judge_support_strength(row):
                 if row['chip_ratio'] >= 10.0:
-                    return "🔥 極強支撐 (籌碼單日大爆發)"
+                    return '<span class="badge badge-danger">🔥強爆發</span>'
                 elif row['chip_ratio'] >= 5.0:
-                    return "✅ 健康買盤 (強勢守穩股)"
+                    return '<span class="badge badge-success">✅健康買</span>'
                 elif row['value_billion'] >= 5.0 and row['chip_ratio'] >= 2.5:
-                    return "🏛️ 大型股法人出資撐盤"
+                    return '<span class="badge badge-info">🏛️法人撐</span>'
                 else:
-                    return "🔹 籌碼中性/觀察中"
+                    return '<span class="badge badge-secondary">观察中</span>'
 
             if not res.empty:
                 res['支撐力道'] = res.apply(judge_support_strength, axis=1)
@@ -194,38 +203,56 @@ try:
                 
         else:
             res['回檔%'] = 0.0
-            res['支撐力道'] = "未啟用心法篩選"
+            res['支撐力道'] = '<span class="badge badge-secondary">未啟用</span>'
             if not res.empty:
                 res = res.sort_values(by='chip_ratio', ascending=False)
 
         # 輸出統計結果
         st.success(f"🎯 篩選完畢，最終符合條件：{len(res)} 檔")
         
-        # --- 【高規格手機排版優化】改用直覺下滑卡片流 ---
+        # --- 【核心重頭戲】特製無滾動條、高對照性手機端 HTML 表格 ---
         if res.empty:
             st.info("無符合當前條件的股票，請調整左側篩選標準。")
         else:
+            # 建立表格表頭
+            table_html = """
+            <div class="phone-table-container">
+                <table class="phone-table">
+                    <thead>
+                        <tr>
+                            <th style="width: 28%;">股票</th>
+                            <th style="width: 18%;">現價</th>
+                            <th style="width: 18%;">回檔</th>
+                            <th style="width: 18%;">集中</th>
+                            <th style="width: 20%;">支撐力道</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+            """
+            
+            # 填入每一列數據
             for idx, row in res.iterrows():
-                # 建立一個獨立精美的 HTML 卡片，把支撐力道、回檔、成交額全部清晰展現
-                card_html = f"""
-                <div class="stock-card">
-                    <div class="stock-title">📈 {row['code']} {row['name']}</div>
-                    <div class="stock-badge">📊 進場參考：{row['支撐力道']}</div>
-                    <div class="stock-metrics">
-                        <div class="metric-item">💰 股價: <b>{row['price']:.2f}元</b></div>
-                        <div class="metric-item">📉 回檔幅度: <b>{row['回檔%']:.1f}%</b></div>
-                        <div class="metric-item">🎯 籌碼集中度: <b>{row['chip_ratio']:.2f}%</b></div>
-                        <div class="metric-item">💎 成交額: <b>{row['value_billion']:.1f}億</b></div>
-                        <div class="metric-item">⏳ PE: <b>{row['pe'] if pd.notna(row['pe']) else '--'}</b></div>
-                    </div>
-                </div>
-                """
-                st.markdown(card_html, unsafe_allow_html=True)
-                
-                # 在卡片下方緊接著放一塊超好按的大按鈕，點擊直接看 Yahoo K 線
                 yahoo_url = f"https://tw.stock.yahoo.com/quote/{row['code']}"
-                st.link_button(f"查看 {row['name']} 詳細 K 線圖", url=yahoo_url, use_container_width=True)
-                st.markdown("---") # 分隔線
+                table_html += f"""
+                        <tr>
+                            <td>
+                                <a class="stock-link" href="{yahoo_url}" target="_blank">{row['code']}<br><span style="font-size:12px;color:#666;">{row['name']}</span></a>
+                            </td>
+                            <td><b>{row['price']:.1f}</b></td>
+                            <td>{row['回檔%']:.1f}%</td>
+                            <td>{row['chip_ratio']:.1f}%</td>
+                            <td>{row['支撐力道']}</td>
+                        </tr>
+                """
+            
+            table_html += """
+                    </tbody>
+                </table>
+            </div>
+            """
+            
+            # 使用 markdown 將精簡表格渲染到畫面上
+            st.markdown(table_html, unsafe_allow_html=True)
 
 except Exception as e:
     st.error(f"程式發生錯誤: {e}")
