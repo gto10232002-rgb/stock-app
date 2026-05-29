@@ -30,7 +30,6 @@ st.markdown("### 📊 台股多元策略選股系統")
 # ==========================================
 @st.cache_data(ttl=3600)
 def get_stock_base_data():
-    # A. 取得每日收盤行情
     df_price = pd.DataFrame()
     try:
         url_price = "https://openapi.twse.com.tw/v1/exchangeReport/STOCK_DAY_ALL"
@@ -48,7 +47,6 @@ def get_stock_base_data():
     except Exception:
         pass
 
-    # B. 取得本益比資料
     df_pe = pd.DataFrame()
     try:
         url_pe = "https://openapi.twse.com.tw/v1/exchangeReport/BWIBBU_ALL"
@@ -63,7 +61,6 @@ def get_stock_base_data():
     except Exception:
         pass
 
-    # C. 取得產業別對照
     df_ind = pd.DataFrame()
     try:
         url_industry = "https://openapi.twse.com.tw/v1/opendata/t187ap03_L"
@@ -90,7 +87,6 @@ def get_stock_base_data():
     except Exception:
         pass
 
-    # D. 晶片籌碼撈取機制
     df_chips = pd.DataFrame()
     headers = {'User-Agent': 'Mozilla/5.0'}
     for i in range(7):
@@ -152,7 +148,6 @@ try:
     if df.empty:
         st.warning("📅 暫時無法從證交所取得完整即時資料，請確認開盤日或稍後再試。")
     else:
-        # 側邊欄設定
         st.sidebar.header("🎯 基礎篩選條件")
         min_p = st.sidebar.number_input("最低股價", value=0.0)
         max_p = st.sidebar.number_input("最高股價", value=500.0)
@@ -165,7 +160,6 @@ try:
         enable_drawdown = st.sidebar.checkbox("開啟「回檔策略」", value=False)
         enable_strong = st.sidebar.checkbox("開啟「近期強勢群組」", value=False)
         
-        # 預設變數，避免未勾選時出錯
         dynamic_threshold = False
         support_mode = "全部符合"
         min_dd = 0
@@ -183,7 +177,6 @@ try:
             st.sidebar.caption("🛠️ 近期強勢群組細項設定")
             min_change = st.sidebar.slider("└ 最低今日漲幅(%)", -10, 10, 5)
         
-        # (1) 執行基礎過濾
         res = df[(df['price'] >= min_p) & (df['price'] <= max_p) & (df['vol'] >= min_v)].copy()
         if max_pe > 0:
             res = res[((res['pe'] > 0) & (res['pe'] <= max_pe)).fillna(False)]
@@ -191,68 +184,60 @@ try:
         if target_industry != "全部":
             res = res[(res['industry'] == target_industry).fillna(False)]
             
-        # 安全核心欄位初始化
         res['回檔%'] = 0.0
         res['今日漲幅%'] = 0.0
         res['支撐力道'] = "🔹 觀察中"
         res['K線連結'] = ""
         
-        # (2) ⚡ 技術指標獲取：採用最穩定的「單檔迴圈安全法」徹底解決漲幅為0的問題
+        # --- 修改點：無論有沒有開策略，都會去抓取資料 ---
         if not res.empty:
-            if enable_drawdown or enable_strong:
-                total_stocks = len(res['code'])
-                with st.spinner(f"正在逐檔分析 {total_stocks} 檔股票的即時技術指標 (確保資料精確度)..."):
-                    drawdown_map = {}
-                    change_map = {}
+            total_stocks = len(res['code'])
+            # 這裡提示文字可以稍作修改，避免使用者困惑
+            with st.spinner(f"正在逐檔分析 {total_stocks} 檔股票的即時技術指標 (確保資料精確度)..."):
+                drawdown_map = {}
+                change_map = {}
+                
+                if total_stocks > 0:
+                    progress_bar = st.progress(0)
                     
-                    if total_stocks > 0:
-                        progress_bar = st.progress(0)
-                        
-                        for index, code in enumerate(res['code']):
-                            tk = f"{str(code).strip()}.TW"
-                            dd, chg = 0.0, 0.0
-                            try:
-                                # 放棄批次下載，改用 Ticker 單一獲取，格式最乾淨穩定
-                                stock = yf.Ticker(tk)
-                                hist = stock.history(period="1mo")
+                    for index, code in enumerate(res['code']):
+                        tk = f"{str(code).strip()}.TW"
+                        dd, chg = 0.0, 0.0
+                        try:
+                            stock = yf.Ticker(tk)
+                            hist = stock.history(period="1mo")
+                            
+                            if not hist.empty and len(hist) >= 2:
+                                closes = hist['Close'].dropna()
+                                highs = hist['High'].dropna()
                                 
-                                if not hist.empty and len(hist) >= 2:
-                                    closes = hist['Close'].dropna()
-                                    highs = hist['High'].dropna()
+                                if len(closes) >= 2:
+                                    high_1m = highs.max()
+                                    current = closes.iloc[-1]
+                                    prev_close = closes.iloc[-2]
                                     
-                                    if len(closes) >= 2:
-                                        high_1m = highs.max()
-                                        current = closes.iloc[-1]
-                                        prev_close = closes.iloc[-2]
-                                        
-                                        if high_1m > 0:
-                                            dd = round(((high_1m - current) / high_1m) * 100, 2)
-                                        if prev_close > 0:
-                                            chg = round(((current - prev_close) / prev_close) * 100, 2)
-                            except Exception:
-                                pass
-                                
-                            drawdown_map[code] = dd
-                            change_map[code] = chg
+                                    if high_1m > 0:
+                                        dd = round(((high_1m - current) / high_1m) * 100, 2)
+                                    if prev_close > 0:
+                                        chg = round(((current - prev_close) / prev_close) * 100, 2)
+                        except Exception:
+                            pass
                             
-                            # 更新進度條
-                            progress_bar.progress((index + 1) / total_stocks)
-                            # 稍微暫停，避免被 Yahoo 封鎖 IP
-                            time.sleep(0.1) 
-                            
-                        # 清除進度條
-                        progress_bar.empty()
+                        drawdown_map[code] = dd
+                        change_map[code] = chg
                         
-                    res['回檔%'] = res['code'].map(drawdown_map).fillna(0.0)
-                    res['今日漲幅%'] = res['code'].map(change_map).fillna(0.0)
-            else:
-                res['回檔%'] = 0.0
-                res['今日漲幅%'] = 0.0
+                        progress_bar.progress((index + 1) / total_stocks)
+                        time.sleep(0.1) 
+                        
+                    progress_bar.empty()
+                    
+                res['回檔%'] = res['code'].map(drawdown_map).fillna(0.0)
+                res['今日漲幅%'] = res['code'].map(change_map).fillna(0.0)
         else:
             res['回檔%'] = pd.Series(dtype=float)
             res['今日漲幅%'] = pd.Series(dtype=float)
+        # ---------------------------------------------
 
-        # (3) 🚨 進階策略過濾邏輯 (修正為 OR 聯集概念，防止兩者互斥導致變 0 檔)
         if not res.empty:
             mask_drawdown = pd.Series(False, index=res.index)
             mask_strong = pd.Series(False, index=res.index)
@@ -275,7 +260,6 @@ try:
             if enable_strong:
                 mask_strong = (res['今日漲幅%'] >= min_change)
             
-            # 套用策略過濾
             if enable_drawdown and enable_strong:
                 res = res[mask_drawdown | mask_strong]
             elif enable_drawdown:
@@ -283,7 +267,6 @@ try:
             elif enable_strong:
                 res = res[mask_strong]
 
-        # (4) 計算支撐力道標籤與排序
         def judge_support_strength(row):
             if pd.isna(row['chip_ratio']): return "🔹 觀察中"
             if row['chip_ratio'] >= 10.0: return "🔥 極強支撐"
@@ -292,7 +275,6 @@ try:
             
         if not res.empty:
             res['支撐力道'] = res.apply(judge_support_strength, axis=1)
-            # 排序邏輯
             if enable_strong and not enable_drawdown:
                 res = res.sort_values(by='今日漲幅%', ascending=False)
             else:
@@ -300,7 +282,6 @@ try:
 
         res['K線連結'] = res['code'].apply(lambda x: f"https://tw.stock.yahoo.com/quote/{x}")
         
-        # (5) 🏷️ 熱門 ETF 成分股標籤資料庫
         etf_db = {
             "2330": ["0050", "00919", "00929"], "2317": ["0050", "00919", "00929"], 
             "2454": ["0050", "0056", "00878", "00919", "00929", "00940"], "2308": ["0050", "00929"], 
@@ -362,11 +343,9 @@ try:
         
         st.success(f"🎯 當前過濾組合：【{strategy_text}】｜ 最終符合條件：{len(display_df)} 檔")
         
-        # 💡 新增的提示區塊：當沒有勾選任何進階策略時顯示
         if not active_strategies:
             st.info("💡 **純基礎條件模式**：目前僅依據側邊欄的「股價範圍」、「成交量門檻」、「本益比限制」與「產業別」進行篩選，尚未疊加任何進階的技術面策略。")
             
-        # 族群共振看板
         if not display_df.empty and '今日漲幅%' in display_df.columns:
             strong_stocks = display_df[display_df['今日漲幅%'] >= 5.0]
             if not strong_stocks.empty:
