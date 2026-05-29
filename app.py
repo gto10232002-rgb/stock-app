@@ -133,45 +133,64 @@ try:
         if target_industry != "全部":
             res = res[res['industry'] == target_industry]
             
-        # 2. ⚡ 升級為高效能批次下載模式 ⚡
+        # 2. ⚡ 升級為無敵對齊模式：徹底解決漲幅 0% 的問題 ⚡
         if not res.empty:
             if enable_drawdown or enable_strong:
                 with st.spinner(f"正在以批次加速模式分析 {len(res)} 檔股票的即時技術指標..."):
                     ticker_list = [f"{str(c).strip()}.TW" for c in res['code']]
                     try:
-                        # 一口氣打包下載所有股票資料，避免被 Yahoo 鎖 IP
                         hist_data = yf.download(ticker_list, period="1mo", progress=False)
                         
                         drawdown_map = {}
                         change_map = {}
                         
+                        # 暴力解構 DataFrame：保證抓到 Close 與 High
+                        close_df = pd.DataFrame()
+                        high_df = pd.DataFrame()
+                        
+                        if isinstance(hist_data.columns, pd.MultiIndex):
+                            for col in hist_data.columns:
+                                if 'Close' in col:
+                                    tk = next((str(x) for x in col if '.TW' in str(x)), None)
+                                    if tk: close_df[tk] = hist_data[col]
+                                elif 'High' in col:
+                                    tk = next((str(x) for x in col if '.TW' in str(x)), None)
+                                    if tk: high_df[tk] = hist_data[col]
+                        else:
+                            if 'Close' in hist_data.columns and 'High' in hist_data.columns:
+                                if len(res['code']) > 0:
+                                    tk = f"{res['code'].iloc[0]}.TW"
+                                    close_df[tk] = hist_data['Close']
+                                    high_df[tk] = hist_data['High']
+
+                        # 對每檔股票進行計算
                         for code in res['code']:
                             tk = f"{code}.TW"
                             dd, chg = 0.0, 0.0
                             try:
-                                if isinstance(hist_data.columns, pd.MultiIndex):
-                                    if tk in hist_data['Close'].columns:
-                                        closes = hist_data['Close'][tk].dropna()
-                                        highs = hist_data['High'][tk].dropna()
-                                else:
-                                    closes = hist_data['Close'].dropna()
-                                    highs = hist_data['High'].dropna()
+                                if tk in close_df.columns and tk in high_df.columns:
+                                    closes = close_df[tk].dropna()
+                                    highs = high_df[tk].dropna()
                                     
-                                if len(closes) >= 2:
-                                    high_1m = highs.max()
-                                    current = closes.iloc[-1]
-                                    prev_close = closes.iloc[-2]
-                                    dd = round(((high_1m - current) / high_1m) * 100, 2) if high_1m > 0 else 0.0
-                                    chg = round(((current - prev_close) / prev_close) * 100, 2) if prev_close > 0 else 0.0
-                            except:
+                                    if len(closes) >= 2:
+                                        high_1m = highs.max()
+                                        current = closes.iloc[-1]
+                                        prev_close = closes.iloc[-2]
+                                        
+                                        if high_1m > 0:
+                                            dd = round(((high_1m - current) / high_1m) * 100, 2)
+                                        if prev_close > 0:
+                                            chg = round(((current - prev_close) / prev_close) * 100, 2)
+                            except Exception:
                                 pass
+                            
                             drawdown_map[code] = dd
                             change_map[code] = chg
                             
-                        res['回檔%'] = res['code'].map(drawdown_map)
-                        res['今日漲幅%'] = res['code'].map(change_map)
+                        res['回檔%'] = res['code'].map(drawdown_map).fillna(0.0)
+                        res['今日漲幅%'] = res['code'].map(change_map).fillna(0.0)
                     except Exception as e:
-                        st.error(f"Yahoo Finance 批次連線異常: {e}")
+                        st.error(f"Yahoo Finance 連線異常: {e}")
                         res['回檔%'] = 0.0
                         res['今日漲幅%'] = 0.0
             else:
@@ -225,6 +244,10 @@ try:
         strategy_text = " + ".join(active_strategies) if active_strategies else "純基礎條件"
         
         st.success(f"🎯 當前過濾組合：【{strategy_text}】｜ 最終符合條件：{len(display_df)} 檔")
+        
+        # 💡 新增的提示區塊：當純基礎條件時顯示
+        if not active_strategies:
+            st.info("💡 **純基礎條件模式**：目前僅依據側邊欄的「股價範圍」、「成交量門檻」、「本益比限制」與「產業別」進行初步篩選，尚未疊加任何技術面進階策略。")
         
         # 族群共振看板
         if not display_df.empty and '今日漲幅%' in display_df.columns:
