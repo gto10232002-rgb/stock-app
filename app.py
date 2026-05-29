@@ -23,10 +23,10 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
-st.markdown("### 📊 台股多元策略選股系統 (除錯診斷版)")
+st.markdown("### 📊 台股多元策略選股系統")
 
 # ==========================================
-# 2. 獲取台股基礎資料
+# 2. 獲取台股基礎資料 (內建異常診斷機制)
 # ==========================================
 @st.cache_data(ttl=3600)
 def get_stock_base_data_v3():
@@ -45,9 +45,9 @@ def get_stock_base_data_v3():
                     df_price['trade_value'] = pd.to_numeric(df_price['TradeValue'].str.replace(',', ''), errors='coerce')
                     df_price = df_price[['Code', 'Name', 'price', 'vol', 'trade_value']].rename(columns={'Code': 'code', 'Name': 'name'})
         else:
-            st.sidebar.error(f"❌ 每日路徑失敗: 證交所回傳狀態碼 {res_price.status_code} (可能是被暫時擋IP)")
+            st.sidebar.error(f"❌ 每日股價路徑失敗: 證交所回傳狀態碼 {res_price.status_code}")
     except Exception as e:
-        st.sidebar.error(f"❌ 每日路徑異常: {e}")
+        st.sidebar.error(f"❌ 每日股價路徑異常: {e}")
 
     df_pe = pd.DataFrame()
     try:
@@ -107,14 +107,14 @@ def get_stock_base_data_v3():
                             chip_success = True
                             break
             elif res.status_code == 403:
-                st.sidebar.error(f"❌ 籌碼路徑 (T86) 遭證交所封鎖 (403 Forbidden)，請靜置一段時間再試。")
+                st.sidebar.error("❌ 籌碼路徑 (T86) 遭證交所阻擋 (403 Forbidden)")
                 break
-        except Exception as e:
+        except Exception:
             pass
-        time.sleep(0.5)
+        time.sleep(0.4)
 
     if not chip_success:
-        st.sidebar.warning("⚠️ 無法成功獲取過去 7 天內任何一天的三大法人籌碼資料(T86)。")
+        st.sidebar.warning("⚠️ 無法取得近 7 日籌碼資料，請注意是否為非交易日盤後或 API 塞車。")
 
     if df_price.empty or df_chips.empty:
         return pd.DataFrame()
@@ -151,6 +151,7 @@ def get_stock_base_data_v3():
     df['value_billion'] = (df['trade_value'] / 100000000).round(2)
     return df
 
+
 # ==========================================
 # ⚡ 技術指標獨立快取
 # ==========================================
@@ -176,6 +177,7 @@ def get_single_stock_tech(code):
         pass
     return dd, chg
 
+
 # ==========================================
 # 3. 主程式邏輯
 # ==========================================
@@ -184,7 +186,7 @@ try:
         df = get_stock_base_data_v3()
     
     if df.empty:
-        st.warning("📅 暫時無法從證交所取得完整即時資料。請查看側邊欄(Sidebar)的紅字或黃字提示了解具體原因。")
+        st.warning("📅 暫時無法從證交所取得完整即時資料。請查看側邊欄提示了解原因。")
     else:
         # 側邊欄設定
         st.sidebar.header("🎯 基礎篩選條件")
@@ -296,7 +298,7 @@ try:
 
         res['K線連結'] = res['code'].apply(lambda x: f"https://tw.stock.yahoo.com/quote/{x}")
         
-        # ETF 資料庫
+        # ETF 成分股對照資料庫
         etf_db = {
             "2330": ["0050", "00919", "00929"], "2317": ["0050", "00919", "00929"], 
             "2454": ["0050", "0056", "00878", "00919", "00929", "00940"], "2308": ["0050", "00929"], 
@@ -357,9 +359,12 @@ try:
         
         st.success(f"🎯 當前過濾組合：【{strategy_text}】｜ 最終符合條件：{len(display_df)} 檔")
         
+        # 顯示資料表格 (已設定代號、名稱欄位凍結固定)
         st.dataframe(
             display_df[['代號', '名稱', '產業', '今日漲幅%', '股價', '回檔%', '集中度%', '支撐力道', '成交額(億)', '本益比', 'K線連結']],
             column_config={
+                "代號": st.column_config.Column(pinned=True, width="small"),  # 👈 凍結代號
+                "名稱": st.column_config.Column(pinned=True),                 # 👈 凍結名稱
                 "今日漲幅%": st.column_config.NumberColumn(format="%.2f %%"),
                 "股價": st.column_config.NumberColumn(format="%.2f"),
                 "回檔%": st.column_config.NumberColumn(format="%.2f %%"),
