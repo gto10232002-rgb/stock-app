@@ -26,10 +26,10 @@ st.markdown("""
 st.markdown("### 📊 台股多元策略選股系統")
 
 # ==========================================
-# 2. 獲取台股基礎資料 (快取1小時)
+# 2. 獲取台股基礎資料 (變更函式名以強制清除舊快取)
 # ==========================================
 @st.cache_data(ttl=3600)
-def get_stock_base_data():
+def get_stock_base_data_v2():
     df_price = pd.DataFrame()
     try:
         url_price = "https://openapi.twse.com.tw/v1/exchangeReport/STOCK_DAY_ALL"
@@ -72,16 +72,17 @@ def get_stock_base_data():
                 if '公司代號' in raw_ind.columns and '產業別' in raw_ind.columns:
                     df_ind = raw_ind[['公司代號', '產業別']].rename(columns={'公司代號': 'code', '產業別': 'industry'})
                     
+                    # 完整定義所有代號，確保 21, 22, 91 轉換為文字名稱
                     ind_map = {
                         "01": "水泥工業", "02": "食品工業", "03": "塑膠工業", "04": "紡織纖維",
                         "05": "電機機械", "06": "電器電纜", "07": "化學工業", "08": "生技醫療業",
                         "09": "玻璃陶瓷", "10": "造紙工業", "11": "鋼鐵工業", "12": "橡膠工業",
                         "13": "汽車工業", "14": "建材營建", "15": "航運業", "16": "觀光餐旅",
                         "17": "金融保險", "18": "貿易百貨", "19": "綜合業", "20": "其他業",
-                        "23": "油電燃氣業", "24": "半導體業", "25": "電腦及週邊設備業", 
-                        "26": "光電業", "27": "通信網路業", "28": "電子零組件業", 
-                        "29": "電子通路業", "30": "資訊服務業", "31": "其他電子業",
-                        "35": "綠能環放", "36": "數位雲端", "37": "運動休閒", "38": "居家生活"
+                        "21": "化學工業", "22": "生技醫療業", "23": "油電燃氣業", "24": "半導體業", 
+                        "25": "電腦及週邊設備業", "26": "光電業", "27": "通信網路業", "28": "電子零組件業", 
+                        "29": "電子通路業", "30": "資訊服務業", "31": "其他電子業", "35": "綠能環保", 
+                        "36": "數位雲端", "37": "運動休閒", "38": "居家生活", "91": "存託憑證"
                     }
                     df_ind['industry'] = df_ind['industry'].astype(str).str.strip().map(ind_map).fillna(df_ind['industry'])
     except Exception:
@@ -140,9 +141,9 @@ def get_stock_base_data():
 
 
 # ==========================================
-# ⚡ 新增：單檔技術指標獨立快取機制 (核心加速點)
+# ⚡ 單檔技術指標獨立快取機制 (維持高流暢速度)
 # ==========================================
-@st.cache_data(ttl=600)  # 快取 10 分鐘，兼顧即時數據準確性與二次查詢的極致速度
+@st.cache_data(ttl=600)  
 def get_single_stock_tech(code):
     tk = f"{str(code).strip()}.TW"
     dd, chg = 0.0, 0.0
@@ -173,7 +174,8 @@ def get_single_stock_tech(code):
 # ==========================================
 try:
     with st.spinner("正在同步最新籌碼與產業數據..."):
-        df = get_stock_base_data()
+        # 調用更新後的函式以越過舊快取
+        df = get_stock_base_data_v2()
     
     if df.empty:
         st.warning("📅 暫時無法從證交所取得完整即時資料，請確認開盤日或稍後再試。")
@@ -221,7 +223,7 @@ try:
         res['支撐力道'] = "🔹 觀察中"
         res['K線連結'] = ""
         
-        # (2) ⚡ 技術指標獲取：採用全新的「快取優化迴圈」
+        # (2) 技術指標獲取 (使用獨立快取機制)
         if not res.empty:
             total_stocks = len(res['code'])
             with st.spinner(f"正在分析 {total_stocks} 檔股票的即時技術指標..."):
@@ -232,14 +234,11 @@ try:
                     progress_bar = st.progress(0)
                     
                     for index, code in enumerate(res['code']):
-                        # 核心優化：調用帶有快取的單檔查詢函式 (已查詢過的股票在此處耗時為 0 秒)
                         dd, chg = get_single_stock_tech(code)
-                        
                         drawdown_map[code] = dd
                         change_map[code] = chg
                         
                         progress_bar.progress((index + 1) / total_stocks)
-                        # 將安全暫停縮短至 0.02 秒，配合記憶體快取實現極速重新渲染
                         time.sleep(0.02) 
                         
                     progress_bar.empty()
