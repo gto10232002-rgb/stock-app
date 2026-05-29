@@ -81,7 +81,7 @@ def get_stock_base_data():
                         "23": "油電燃氣業", "24": "半導體業", "25": "電腦及週邊設備業", 
                         "26": "光電業", "27": "通信網路業", "28": "電子零組件業", 
                         "29": "電子通路業", "30": "資訊服務業", "31": "其他電子業",
-                        "35": "綠能環保", "36": "數位雲端", "37": "運動休閒", "38": "居家生活"
+                        "35": "綠能環放", "36": "數位雲端", "37": "運動休閒", "38": "居家生活"
                     }
                     df_ind['industry'] = df_ind['industry'].astype(str).str.strip().map(ind_map).fillna(df_ind['industry'])
     except Exception:
@@ -138,6 +138,36 @@ def get_stock_base_data():
     df['value_billion'] = (df['trade_value'] / 100000000).round(2)
     return df
 
+
+# ==========================================
+# ⚡ 新增：單檔技術指標獨立快取機制 (核心加速點)
+# ==========================================
+@st.cache_data(ttl=600)  # 快取 10 分鐘，兼顧即時數據準確性與二次查詢的極致速度
+def get_single_stock_tech(code):
+    tk = f"{str(code).strip()}.TW"
+    dd, chg = 0.0, 0.0
+    try:
+        stock = yf.Ticker(tk)
+        hist = stock.history(period="1mo")
+        
+        if not hist.empty and len(hist) >= 2:
+            closes = hist['Close'].dropna()
+            highs = hist['High'].dropna()
+            
+            if len(closes) >= 2:
+                high_1m = highs.max()
+                current = closes.iloc[-1]
+                prev_close = closes.iloc[-2]
+                
+                if high_1m > 0:
+                    dd = round(((high_1m - current) / high_1m) * 100, 2)
+                if prev_close > 0:
+                    chg = round(((current - prev_close) / prev_close) * 100, 2)
+    except Exception:
+        pass
+    return dd, chg
+
+
 # ==========================================
 # 3. 主程式邏輯
 # ==========================================
@@ -148,6 +178,7 @@ try:
     if df.empty:
         st.warning("📅 暫時無法從證交所取得完整即時資料，請確認開盤日或稍後再試。")
     else:
+        # 側邊欄設定
         st.sidebar.header("🎯 基礎篩選條件")
         min_p = st.sidebar.number_input("最低股價", value=0.0)
         max_p = st.sidebar.number_input("最高股價", value=500.0)
@@ -177,6 +208,7 @@ try:
             st.sidebar.caption("🛠️ 近期強勢群組細項設定")
             min_change = st.sidebar.slider("└ 最低今日漲幅(%)", -10, 10, 5)
         
+        # (1) 執行基礎過濾
         res = df[(df['price'] >= min_p) & (df['price'] <= max_p) & (df['vol'] >= min_v)].copy()
         if max_pe > 0:
             res = res[((res['pe'] > 0) & (res['pe'] <= max_pe)).fillna(False)]
@@ -189,9 +221,10 @@ try:
         res['支撐力道'] = "🔹 觀察中"
         res['K線連結'] = ""
         
+        # (2) ⚡ 技術指標獲取：採用全新的「快取優化迴圈」
         if not res.empty:
             total_stocks = len(res['code'])
-            with st.spinner(f"正在逐檔分析 {total_stocks} 檔股票的即時技術指標 (確保資料精確度)..."):
+            with st.spinner(f"正在分析 {total_stocks} 檔股票的即時技術指標..."):
                 drawdown_map = {}
                 change_map = {}
                 
@@ -199,33 +232,15 @@ try:
                     progress_bar = st.progress(0)
                     
                     for index, code in enumerate(res['code']):
-                        tk = f"{str(code).strip()}.TW"
-                        dd, chg = 0.0, 0.0
-                        try:
-                            stock = yf.Ticker(tk)
-                            hist = stock.history(period="1mo")
-                            
-                            if not hist.empty and len(hist) >= 2:
-                                closes = hist['Close'].dropna()
-                                highs = hist['High'].dropna()
-                                
-                                if len(closes) >= 2:
-                                    high_1m = highs.max()
-                                    current = closes.iloc[-1]
-                                    prev_close = closes.iloc[-2]
-                                    
-                                    if high_1m > 0:
-                                        dd = round(((high_1m - current) / high_1m) * 100, 2)
-                                    if prev_close > 0:
-                                        chg = round(((current - prev_close) / prev_close) * 100, 2)
-                        except Exception:
-                            pass
-                            
+                        # 核心優化：調用帶有快取的單檔查詢函式 (已查詢過的股票在此處耗時為 0 秒)
+                        dd, chg = get_single_stock_tech(code)
+                        
                         drawdown_map[code] = dd
                         change_map[code] = chg
                         
                         progress_bar.progress((index + 1) / total_stocks)
-                        time.sleep(0.1) 
+                        # 將安全暫停縮短至 0.02 秒，配合記憶體快取實現極速重新渲染
+                        time.sleep(0.02) 
                         
                     progress_bar.empty()
                     
@@ -235,6 +250,7 @@ try:
             res['回檔%'] = pd.Series(dtype=float)
             res['今日漲幅%'] = pd.Series(dtype=float)
 
+        # (3) 進階策略過濾邏輯
         if not res.empty:
             mask_drawdown = pd.Series(False, index=res.index)
             mask_strong = pd.Series(False, index=res.index)
@@ -264,6 +280,7 @@ try:
             elif enable_strong:
                 res = res[mask_strong]
 
+        # (4) 計算支撐力道與排序
         def judge_support_strength(row):
             if pd.isna(row['chip_ratio']): return "🔹 觀察中"
             if row['chip_ratio'] >= 10.0: return "🔥 極強支撐"
@@ -279,6 +296,7 @@ try:
 
         res['K線連結'] = res['code'].apply(lambda x: f"https://tw.stock.yahoo.com/quote/{x}")
         
+        # (5) 熱門 ETF 成分股對照資料庫
         etf_db = {
             "2330": ["0050", "00919", "00929"], "2317": ["0050", "00919", "00929"], 
             "2454": ["0050", "0056", "00878", "00919", "00929", "00940"], "2308": ["0050", "00929"], 
@@ -343,7 +361,7 @@ try:
         if not active_strategies:
             st.info("💡 **純基礎條件模式**：目前僅依據側邊欄的「股價範圍」、「成交量門檻」、「本益比限制」與「產業別」進行篩選，尚未疊加任何進階的技術面策略。")
             
-        # 修正：只有開啟任一進階策略時，才顯示族群共振看板
+        # 只有開啟任一進階策略時，才顯示族群共振看板
         if active_strategies and not display_df.empty and '今日漲幅%' in display_df.columns:
             strong_stocks = display_df[display_df['今日漲幅%'] >= 5.0]
             if not strong_stocks.empty:
