@@ -23,13 +23,13 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
-st.markdown("### 📊 台股多元策略選股系統")
+st.markdown("### 📊 台股多元策略選股系統 (除錯診斷版)")
 
 # ==========================================
-# 2. 獲取台股基礎資料 (變更函式名以強制清除舊快取)
+# 2. 獲取台股基礎資料
 # ==========================================
 @st.cache_data(ttl=3600)
-def get_stock_base_data_v2():
+def get_stock_base_data_v3():
     df_price = pd.DataFrame()
     try:
         url_price = "https://openapi.twse.com.tw/v1/exchangeReport/STOCK_DAY_ALL"
@@ -44,8 +44,10 @@ def get_stock_base_data_v2():
                     df_price['vol'] = pd.to_numeric(df_price['TradeVolume'].str.replace(',', ''), errors='coerce') / 1000
                     df_price['trade_value'] = pd.to_numeric(df_price['TradeValue'].str.replace(',', ''), errors='coerce')
                     df_price = df_price[['Code', 'Name', 'price', 'vol', 'trade_value']].rename(columns={'Code': 'code', 'Name': 'name'})
-    except Exception:
-        pass
+        else:
+            st.sidebar.error(f"❌ 每日路徑失敗: 證交所回傳狀態碼 {res_price.status_code} (可能是被暫時擋IP)")
+    except Exception as e:
+        st.sidebar.error(f"❌ 每日路徑異常: {e}")
 
     df_pe = pd.DataFrame()
     try:
@@ -71,25 +73,13 @@ def get_stock_base_data_v2():
                 raw_ind = pd.DataFrame(data_json)
                 if '公司代號' in raw_ind.columns and '產業別' in raw_ind.columns:
                     df_ind = raw_ind[['公司代號', '產業別']].rename(columns={'公司代號': 'code', '產業別': 'industry'})
-                    
-                    # 完整定義所有代號，確保 21, 22, 91 轉換為文字名稱
-                    ind_map = {
-                        "01": "水泥工業", "02": "食品工業", "03": "塑膠工業", "04": "紡織纖維",
-                        "05": "電機機械", "06": "電器電纜", "07": "化學工業", "08": "生技醫療業",
-                        "09": "玻璃陶瓷", "10": "造紙工業", "11": "鋼鐵工業", "12": "橡膠工業",
-                        "13": "汽車工業", "14": "建材營建", "15": "航運業", "16": "觀光餐旅",
-                        "17": "金融保險", "18": "貿易百貨", "19": "綜合業", "20": "其他業",
-                        "21": "化學工業", "22": "生技醫療業", "23": "油電燃氣業", "24": "半導體業", 
-                        "25": "電腦及週邊設備業", "26": "光電業", "27": "通信網路業", "28": "電子零組件業", 
-                        "29": "電子通路業", "30": "資訊服務業", "31": "其他電子業", "35": "綠能環保", 
-                        "36": "數位雲端", "37": "運動休閒", "38": "居家生活", "91": "存託憑證"
-                    }
-                    df_ind['industry'] = df_ind['industry'].astype(str).str.strip().map(ind_map).fillna(df_ind['industry'])
     except Exception:
         pass
 
     df_chips = pd.DataFrame()
-    headers = {'User-Agent': 'Mozilla/5.0'}
+    headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'}
+    chip_success = False
+    
     for i in range(7):
         date_str = (datetime.datetime.now() - datetime.timedelta(days=i)).strftime("%Y%m%d")
         url = f"https://www.twse.com.tw/rwd/zh/fund/T86?date={date_str}&selectType=ALLBUT0999&response=json"
@@ -114,10 +104,17 @@ def get_stock_base_data_v2():
                             df_chips['code'] = df_raw['證券代號'].astype(str).str.strip()
                             df_chips['fi'] = pd.to_numeric(df_raw[fi_col].str.replace(',', ''), errors='coerce') / 1000
                             df_chips['it'] = pd.to_numeric(df_raw[it_col].str.replace(',', ''), errors='coerce') / 1000
+                            chip_success = True
                             break
-        except Exception:
+            elif res.status_code == 403:
+                st.sidebar.error(f"❌ 籌碼路徑 (T86) 遭證交所封鎖 (403 Forbidden)，請靜置一段時間再試。")
+                break
+        except Exception as e:
             pass
-        time.sleep(0.3)
+        time.sleep(0.5)
+
+    if not chip_success:
+        st.sidebar.warning("⚠️ 無法成功獲取過去 7 天內任何一天的三大法人籌碼資料(T86)。")
 
     if df_price.empty or df_chips.empty:
         return pd.DataFrame()
@@ -135,13 +132,27 @@ def get_stock_base_data_v2():
         df['industry'] = '其他'
         
     df['industry'] = df['industry'].fillna('其他')
+    
+    ind_map = {
+        "01": "水泥工業", "02": "食品工業", "03": "塑膠工業", "04": "紡織纖維",
+        "05": "電機機械", "06": "電器電纜", "07": "化學工業", "08": "生技醫療業",
+        "09": "玻璃陶瓷", "10": "造紙工業", "11": "鋼鐵工業", "12": "橡膠工業",
+        "13": "汽車工業", "14": "建材營建", "15": "航運業", "16": "觀光餐旅",
+        "17": "金融保險", "18": "貿易百貨", "19": "綜合業", "20": "其他業",
+        "21": "化學工業", "22": "生技醫療業", "23": "油電燃氣業", "24": "半導體業", 
+        "25": "電腦及週邊設備業", "26": "光電業", "27": "通信網路業", "28": "電子零組件業", 
+        "29": "電子通路業", "30": "資訊服務業", "31": "其他電子業", "35": "綠能環保", 
+        "36": "數位雲端", "37": "運動休閒", "38": "居家生活", "91": "存託憑證"
+    }
+    df['industry'] = df['industry'].astype(str).str.strip().map(ind_map).fillna(df['industry'])
+    df['industry'] = df['industry'].replace(['', 'nan', 'None'], '其他')
+    
     df['chip_ratio'] = ((df['fi'] + df['it']) / df['vol'] * 100).round(2)
     df['value_billion'] = (df['trade_value'] / 100000000).round(2)
     return df
 
-
 # ==========================================
-# ⚡ 單檔技術指標獨立快取機制 (維持高流暢速度)
+# ⚡ 技術指標獨立快取
 # ==========================================
 @st.cache_data(ttl=600)  
 def get_single_stock_tech(code):
@@ -150,16 +161,13 @@ def get_single_stock_tech(code):
     try:
         stock = yf.Ticker(tk)
         hist = stock.history(period="1mo")
-        
         if not hist.empty and len(hist) >= 2:
             closes = hist['Close'].dropna()
             highs = hist['High'].dropna()
-            
             if len(closes) >= 2:
                 high_1m = highs.max()
                 current = closes.iloc[-1]
                 prev_close = closes.iloc[-2]
-                
                 if high_1m > 0:
                     dd = round(((high_1m - current) / high_1m) * 100, 2)
                 if prev_close > 0:
@@ -168,17 +176,15 @@ def get_single_stock_tech(code):
         pass
     return dd, chg
 
-
 # ==========================================
 # 3. 主程式邏輯
 # ==========================================
 try:
     with st.spinner("正在同步最新籌碼與產業數據..."):
-        # 調用更新後的函式以越過舊快取
-        df = get_stock_base_data_v2()
+        df = get_stock_base_data_v3()
     
     if df.empty:
-        st.warning("📅 暫時無法從證交所取得完整即時資料，請確認開盤日或稍後再試。")
+        st.warning("📅 暫時無法從證交所取得完整即時資料。請查看側邊欄(Sidebar)的紅字或黃字提示了解具體原因。")
     else:
         # 側邊欄設定
         st.sidebar.header("🎯 基礎篩選條件")
@@ -210,7 +216,7 @@ try:
             st.sidebar.caption("🛠️ 近期強勢群組細項設定")
             min_change = st.sidebar.slider("└ 最低今日漲幅(%)", -10, 10, 5)
         
-        # (1) 執行基礎過濾
+        # 執行基礎過濾
         res = df[(df['price'] >= min_p) & (df['price'] <= max_p) & (df['vol'] >= min_v)].copy()
         if max_pe > 0:
             res = res[((res['pe'] > 0) & (res['pe'] <= max_pe)).fillna(False)]
@@ -223,7 +229,6 @@ try:
         res['支撐力道'] = "🔹 觀察中"
         res['K線連結'] = ""
         
-        # (2) 技術指標獲取 (使用獨立快取機制)
         if not res.empty:
             total_stocks = len(res['code'])
             with st.spinner(f"正在分析 {total_stocks} 檔股票的即時技術指標..."):
@@ -232,15 +237,12 @@ try:
                 
                 if total_stocks > 0:
                     progress_bar = st.progress(0)
-                    
                     for index, code in enumerate(res['code']):
                         dd, chg = get_single_stock_tech(code)
                         drawdown_map[code] = dd
                         change_map[code] = chg
-                        
                         progress_bar.progress((index + 1) / total_stocks)
-                        time.sleep(0.02) 
-                        
+                        time.sleep(0.01) 
                     progress_bar.empty()
                     
                 res['回檔%'] = res['code'].map(drawdown_map).fillna(0.0)
@@ -249,7 +251,7 @@ try:
             res['回檔%'] = pd.Series(dtype=float)
             res['今日漲幅%'] = pd.Series(dtype=float)
 
-        # (3) 進階策略過濾邏輯
+        # 策略過濾邏輯
         if not res.empty:
             mask_drawdown = pd.Series(False, index=res.index)
             mask_strong = pd.Series(False, index=res.index)
@@ -264,7 +266,6 @@ try:
                     sub_mask = sub_mask & (res['chip_ratio'] >= 5.0)
                 
                 sub_mask = sub_mask & (res['回檔%'] >= min_dd)
-                
                 if support_mode == "波段洗刷接貨型":
                     sub_mask = sub_mask & (res['回檔%'] >= max(8.0, float(min_dd)))
                 mask_drawdown = sub_mask
@@ -279,7 +280,7 @@ try:
             elif enable_strong:
                 res = res[mask_strong]
 
-        # (4) 計算支撐力道與排序
+        # 計算支撐力道與排序
         def judge_support_strength(row):
             if pd.isna(row['chip_ratio']): return "🔹 觀察中"
             if row['chip_ratio'] >= 10.0: return "🔥 極強支撐"
@@ -295,7 +296,7 @@ try:
 
         res['K線連結'] = res['code'].apply(lambda x: f"https://tw.stock.yahoo.com/quote/{x}")
         
-        # (5) 熱門 ETF 成分股對照資料庫
+        # ETF 資料庫
         etf_db = {
             "2330": ["0050", "00919", "00929"], "2317": ["0050", "00919", "00929"], 
             "2454": ["0050", "0056", "00878", "00919", "00929", "00940"], "2308": ["0050", "00929"], 
@@ -338,8 +339,7 @@ try:
         def merge_etf_info(row):
             c = str(row['code']).strip()
             n = str(row['name']).strip()
-            if c in etf_db:
-                return f"{n} ({','.join(etf_db[c])})"
+            if c in etf_db: return f"{n} ({','.join(etf_db[c])})"
             return n
 
         if not res.empty:
@@ -357,24 +357,6 @@ try:
         
         st.success(f"🎯 當前過濾組合：【{strategy_text}】｜ 最終符合條件：{len(display_df)} 檔")
         
-        if not active_strategies:
-            st.info("💡 **純基礎條件模式**：目前僅依據側邊欄的「股價範圍」、「成交量門檻」、「本益比限制」與「產業別」進行篩選，尚未疊加任何進階的技術面策略。")
-            
-        # 只有開啟任一進階策略時，才顯示族群共振看板
-        if active_strategies and not display_df.empty and '今日漲幅%' in display_df.columns:
-            strong_stocks = display_df[display_df['今日漲幅%'] >= 5.0]
-            if not strong_stocks.empty:
-                industry_counts = strong_stocks['產業'].value_counts()
-                hot_industries = industry_counts[industry_counts >= 2]
-                
-                if not hot_industries.empty:
-                    st.info("🚨 **發現族群共振！以下產業出現多檔大漲股：**")
-                    cols = st.columns(min(len(hot_industries), 5))
-                    for i, (ind, count) in enumerate(hot_industries.items()):
-                        if i < 5:
-                            with cols[i]:
-                                st.metric(label=f"🔥 {ind}", value=f"{count} 檔強勢")
-
         st.dataframe(
             display_df[['代號', '名稱', '產業', '今日漲幅%', '股價', '回檔%', '集中度%', '支撐力道', '成交額(億)', '本益比', 'K線連結']],
             column_config={
@@ -392,4 +374,4 @@ try:
         )
 
 except Exception as e:
-    st.error(f"⚠️ 網頁系統執行異常: {e}，請嘗試重新整理。")
+    st.error(f"⚠️ 網頁系統執行異常: {e}")
