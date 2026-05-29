@@ -189,10 +189,8 @@ try:
         res['支撐力道'] = "🔹 觀察中"
         res['K線連結'] = ""
         
-        # --- 修改點：無論有沒有開策略，都會去抓取資料 ---
         if not res.empty:
             total_stocks = len(res['code'])
-            # 這裡提示文字可以稍作修改，避免使用者困惑
             with st.spinner(f"正在逐檔分析 {total_stocks} 檔股票的即時技術指標 (確保資料精確度)..."):
                 drawdown_map = {}
                 change_map = {}
@@ -236,7 +234,6 @@ try:
         else:
             res['回檔%'] = pd.Series(dtype=float)
             res['今日漲幅%'] = pd.Series(dtype=float)
-        # ---------------------------------------------
 
         if not res.empty:
             mask_drawdown = pd.Series(False, index=res.index)
@@ -346,7 +343,8 @@ try:
         if not active_strategies:
             st.info("💡 **純基礎條件模式**：目前僅依據側邊欄的「股價範圍」、「成交量門檻」、「本益比限制」與「產業別」進行篩選，尚未疊加任何進階的技術面策略。")
             
-        if not display_df.empty and '今日漲幅%' in display_df.columns:
+        # 修正：只有開啟任一進階策略時，才顯示族群共振看板
+        if active_strategies and not display_df.empty and '今日漲幅%' in display_df.columns:
             strong_stocks = display_df[display_df['今日漲幅%'] >= 5.0]
             if not strong_stocks.empty:
                 industry_counts = strong_stocks['產業'].value_counts()
