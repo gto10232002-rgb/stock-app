@@ -145,7 +145,7 @@ def get_stock_base_data_v3():
         "36": "數位雲端", "37": "運動休閒", "38": "居家生活", "91": "存託憑證"
     }
     df['industry'] = df['industry'].astype(str).str.strip().map(ind_map).fillna(df['industry'])
-    df['industry'] = df['industry'].replace(['', 'nan', 'None'], '反備用')
+    df['industry'] = df['industry'].replace(['', 'nan', 'None'], '其他')
     
     df['chip_ratio'] = ((df['fi'] + df['it']) / df['vol'] * 100).round(2)
     df['value_billion'] = (df['trade_value'] / 100000000).round(2)
@@ -356,22 +356,41 @@ try:
         if enable_strong: active_strategies.append("近期強勢群組")
         strategy_text = " 或 ".join(active_strategies) if active_strategies else "純基礎條件"
         
-        # 安全防護：統計各產業檔數
+        # 判斷是否啟用了進階策略
+        is_advanced_strategy_active = enable_drawdown or enable_strong
+        
+        # 統計處理與防護機制
         if 'display_df' in locals() and isinstance(display_df, pd.DataFrame) and not display_df.empty:
-            ind_counts = display_df['產業'].value_counts()
-            filtered_ind = [f"{ind}: {count} 檔" for ind, count in ind_counts.items() if count >= 3]
-            ind_text = f"（{', '.join(filtered_ind)}）" if filtered_ind else "（目前沒有3檔以上共同產業的主力出現）"
             total_count = len(display_df)
             current_df = display_df
+            
+            # 如果啟用了進階策略，計算符合 >= 3 檔的產業列表
+            if is_advanced_strategy_active:
+                ind_counts = display_df['產業'].value_counts()
+                filtered_ind = [f"{ind}: {count} 檔" for ind, count in ind_counts.items() if count >= 3]
+                
+                if filtered_ind:
+                    # 依需求排序列出
+                    ind_lines = "\n".join(filtered_ind)
+                    ind_text = f"\n{ind_lines}"
+                else:
+                    ind_text = "\n（目前沒有3檔以上共同產業的主力出現）"
+            else:
+                # 只有基礎條件時，不顯示產業統計資訊
+                ind_text = ""
         else:
-            ind_text = "（目前沒有3檔以上共同產業的主力出現）"
             total_count = 0
             current_df = pd.DataFrame(columns=['代號', '名稱', '產業', '今日漲幅%', '股價', '回檔%', '集中度%', '支撐力道', '成交額(億)', '本益比', 'K線連結'])
+            if is_advanced_strategy_active:
+                ind_text = "\n（目前沒有3檔以上共同產業的主力出現）"
+            else:
+                ind_text = ""
 
-        # 渲染上方綠色提示訊息
-        st.success(f"🎯 當前過濾組合：【{strategy_text}】｜ 最終符合條件：{total_count} 檔 {ind_text}")
+        # 組合最終要呈現的提示訊息（移除單行括號，改採條列式排列）
+        message_box_content = f"🎯 當前過濾組合：【{strategy_text}】  \n**最終符合條件：{total_count} 檔**{ind_text}"
+        st.success(message_box_content)
         
-        # 顯示資料表格 (完美凍結代號與名稱欄位)
+        # 顯示資料表格 (固定凍結代號與名稱)
         st.dataframe(
             current_df[['代號', '名稱', '產業', '今日漲幅%', '股價', '回檔%', '集中度%', '支撐力道', '成交額(億)', '本益比', 'K線連結']],
             column_config={
