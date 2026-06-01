@@ -212,16 +212,23 @@ def get_stock_base_data_v3():
 
                 break
 
-# 移至判斷式外面或進行全域處理，確保 0 檔時也能正常顯示
+# 計算統計資訊（仍在 try 區塊內，可安全讀取 display_df）
         active_strategies = []
         if enable_drawdown: active_strategies.append("回檔策略")
         if enable_strong: active_strategies.append("近期強勢群組")
         strategy_text = " 或 ".join(active_strategies) if active_strategies else "純基礎條件"
         
-        # 建立產業統計邏輯 (加上安全防護，避免 display_df 還沒定義)
+        # 統計各產業檔數，並過濾出 3 檔（含）以上的產業
         if 'display_df' in locals() and not display_df.empty:
             ind_counts = display_df['產業'].value_counts()
             filtered_ind = [f"{ind}: {count} 檔" for ind, count in ind_counts.items() if count >= 3]
+            ind_text = f"（{', '.join(filtered_ind)}）" if filtered_ind else "（目前沒有3檔以上共同產業的主力出現）"
+            total_count = len(display_df)
+        else:
+            ind_text = "（目前沒有3檔以上共同產業的主力出現）"
+            total_count = 0
+
+        st.success(f"🎯 當前過濾組合：【{strategy_text}】｜ 最終符合條件：{total_count} 檔 {ind_text}")
             ind_text = f"（{', '.join(filtered_ind)}）" if filtered_ind else "（目前沒有3檔以上共同產業的主力出現）"
             total_count = len(display_df)
         else:
