@@ -8,7 +8,7 @@ import yfinance as yf
 # ==========================================
 # 1. 頁面配置與 CSS
 # ==========================================
-st.set_page_config(page_title="StockTool", layout="wide") # 👈 這裡已修正！
+st.set_page_config(page_title="StockTool", layout="wide")
 
 st.markdown("""
 <style>
@@ -26,7 +26,7 @@ st.markdown("""
 st.markdown("### 📊 台股多元策略選股系統")
 
 # ==========================================
-# 📌 ETF 成分股對照資料庫 (移至全域)
+# 📌 ETF 成分股對照資料庫
 # ==========================================
 etf_db = {
     "2330": ["0050", "00919", "00929"], "2317": ["0050", "00919", "00929"], 
@@ -375,19 +375,21 @@ try:
             ind_lines = "\n".join([f"* 📌 **{k}**：{v} 檔" for k, v in ind_counts.items()])
             st.info(f"📊 **近期強勢族群分佈統計**：\n{ind_lines}")
         
-        # 顯示資料表格 (全數還原原設定)
+        # 🚀【核心修改：全面強制欄位限寬，實現完美精簡檢視】
         st.dataframe(
             display_df[['代號', '名稱', '產業', '今日漲幅%', '股價', '回檔%', '集中度%', '支撐力道', '成交額(億)', '本益比', 'K線連結']],
             column_config={
                 "代號": st.column_config.Column(pinned=True, width="small"),
-                "名稱": st.column_config.Column(pinned=True),
-                "今日漲幅%": st.column_config.NumberColumn(format="%.2f %%"),
-                "股價": st.column_config.NumberColumn(format="%.2f"),
-                "回檔%": st.column_config.NumberColumn(format="%.2f %%"),
-                "集中度%": st.column_config.NumberColumn(format="%.2f %%"),
-                "成交額(億)": st.column_config.NumberColumn(format="%.2f 億"),
-                "本益比": st.column_config.NumberColumn(format="%.2f"),
-                "K線連結": st.column_config.LinkColumn("K線", display_text="📈查看")
+                "名稱": st.column_config.Column(pinned=True, width="medium"), # 👈 強制設定 medium 寬度，絕不被 ETF 字串拉寬
+                "產業": st.column_config.Column(width="small"),
+                "今日漲幅%": st.column_config.NumberColumn(format="%.2f %%", width="small"),
+                "股價": st.column_config.NumberColumn(format="%.2f", width="small"),
+                "回檔%": st.column_config.NumberColumn(format="%.2f %%", width="small"),
+                "集中度%": st.column_config.NumberColumn(format="%.2f %%", width="small"),
+                "支撐力道": st.column_config.Column(width="small"),
+                "成交額(億)": st.column_config.NumberColumn(format="%.2f 億", width="small"),
+                "本益比": st.column_config.NumberColumn(format="%.2f", width="small"),
+                "K線連結": st.column_config.LinkColumn("K線", display_text="📈查看", width="small")
             },
             use_container_width=True,
             hide_index=True,
