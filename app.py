@@ -67,7 +67,7 @@ etf_db = {
     "6176": ["00940"], "1513": ["00940"], "2393": ["00940"], "6257": ["00940"]
 }
 
-# ⚡【核心優化】改為單行緊湊型註解，徹底釋放 Streamlit 寬度限制功能
+# 單行緊湊型註解格式，配合限制寬度
 def apply_excel_comment_style(df_input):
     if df_input.empty:
         return df_input
@@ -75,7 +75,6 @@ def apply_excel_comment_style(df_input):
         c = str(row['code']).strip()
         n = str(row['name']).strip()
         if c in etf_db: 
-            # 移除 \n，使用單行緊湊標記，使表格能完美執行自動裁剪與寬度限制
             return f"{n} 💬 [{', '.join(etf_db[c])}]"
         return n
     df_input['name'] = df_input.apply(merge_etf_info, axis=1)
@@ -335,12 +334,12 @@ try:
             ind_lines = "\n".join([f"* 📌 **{k}**：{v} 檔" for k, v in ind_counts.items()])
             st.info(f"📊 **近期強勢族群分佈統計**：\n{ind_lines}")
         
-        # 🚀【完美像素控寬 + 真正凍結】
+        # 🚀【正解：利用 pin_columns 直接鎖定代號、名稱欄位】
         st.dataframe(
             display_df[['代號', '名稱', '產業', '今日漲幅%', '股價', '回檔%', '集中度%', '支撐力道', '成交額(億)', '本益比', 'K線連結']],
             column_config={
                 "代號": st.column_config.TextColumn("代號", width=60),
-                "名稱": st.column_config.TextColumn("名稱", width=140), # 👈 140像素固定！超出變 ... 點擊展開，絕不撐開
+                "名稱": st.column_config.TextColumn("名稱", width=140), 
                 "產業": st.column_config.TextColumn("產業", width=100),
                 "今日漲幅%": st.column_config.NumberColumn("今日漲幅%", format="%.2f %%", width=90),
                 "股價": st.column_config.NumberColumn("股價", format="%.2f", width=70),
@@ -351,7 +350,8 @@ try:
                 "本益比": st.column_config.NumberColumn("本益比", format="%.2f", width=75),
                 "K線連結": st.column_config.LinkColumn("K線", display_text="📈查看", width=70)
             },
-            use_container_width=True, # 👈 搭配單行緊湊標記，讓整個表格剛好塞滿視窗，實現「代號與名稱」永遠維持在最左側不移位的凍結感！
+            pin_columns=["代號", "名稱"], # 👈 這是 Streamlit 官方原生凍結語法！絕對成功凍結
+            use_container_width=True, 
             hide_index=True,
             height=650
         )
