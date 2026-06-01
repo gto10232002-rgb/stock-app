@@ -8,7 +8,7 @@ import yfinance as yf
 # ==========================================
 # 1. 頁面配置與 CSS
 # ==========================================
-st.set_set_page_config(page_title="StockTool", layout="wide")
+st.set_page_config(page_title="StockTool", layout="wide") # 👈 這裡已修正！
 
 st.markdown("""
 <style>
@@ -67,7 +67,7 @@ etf_db = {
     "6176": ["00940"], "1513": ["00940"], "2393": ["00940"], "6257": ["00940"]
 }
 
-# 🚀 轉換 Excel 註解樣式函式
+# 轉換 Excel 註解樣式函式
 def apply_excel_comment_style(df_input):
     if df_input.empty:
         return df_input
@@ -75,7 +75,6 @@ def apply_excel_comment_style(df_input):
         c = str(row['code']).strip()
         n = str(row['name']).strip()
         if c in etf_db: 
-            # 加上 💬 作為類似 Excel 紅色三角的註解視覺標記，並換行隱藏內容
             return f"{n} 💬\n💡 納入成分股: {', '.join(etf_db[c])}"
         return n
     df_input['name'] = df_input.apply(merge_etf_info, axis=1)
@@ -241,8 +240,6 @@ def get_single_stock_tech(code):
 try:
     with st.spinner("正在同步最新籌碼與產業數據..."):
         df = get_stock_base_data_v3()
-        # 🚀【關鍵修改一：在資料最上游直接注入註解機制】
-        # 這樣做能確保不論是主表格、還是任何「進階條件」的衍生表格，全都會自動帶入註解效果！
         if not df.empty:
             df = apply_excel_comment_style(df)
     
@@ -378,12 +375,12 @@ try:
             ind_lines = "\n".join([f"* 📌 **{k}**：{v} 檔" for k, v in ind_counts.items()])
             st.info(f"📊 **近期強勢族群分佈統計**：\n{ind_lines}")
         
-        # 🚀【關鍵修改二：原汁原味保留您的凍結欄位與表格寬度設定】
+        # 顯示資料表格 (全數還原原設定)
         st.dataframe(
             display_df[['代號', '名稱', '產業', '今日漲幅%', '股價', '回檔%', '集中度%', '支撐力道', '成交額(億)', '本益比', 'K線連結']],
             column_config={
-                "代號": st.column_config.Column(pinned=True, width="small"), # 👈 凍結
-                "名稱": st.column_config.Column(pinned=True),                # 👈 凍結（不額外設固定寬度，完美適應原本長度）
+                "代號": st.column_config.Column(pinned=True, width="small"),
+                "名稱": st.column_config.Column(pinned=True),
                 "今日漲幅%": st.column_config.NumberColumn(format="%.2f %%"),
                 "股價": st.column_config.NumberColumn(format="%.2f"),
                 "回檔%": st.column_config.NumberColumn(format="%.2f %%"),
