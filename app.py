@@ -222,6 +222,20 @@ def get_stock_base_data_v3():
         if enable_strong: active_strategies.append("近期強勢群組")
         strategy_text = " 或 ".join(active_strategies) if active_strategies else "純基礎條件"
         
+        # 統計各產業檔數（使用 rename 後的 '產業' 欄位名稱）
+        ind_counts = display_df['產業'].value_counts()
+        
+        # 篩選出 3 檔（含）以上的產業
+        filtered_ind = [f"{ind}: {count} 檔" for ind, count in ind_counts.items() if count >= 3]
+        
+        # 判斷是否有 3 檔以上的共同產業
+        if filtered_ind:
+            ind_text = f"（{', '.join(filtered_ind)}）"
+        else:
+            ind_text = "（目前沒有3檔以上共同產業的主力出現）"
+
+        st.success(f"🎯 當前過濾組合：【{strategy_text}】｜ 最終符合條件：{len(display_df)} 檔 {ind_text}")
+        
         # 統計各產業檔數，並過濾出 >= 2 檔的產業
         ind_counts = display_df['產業'].value_counts()
         filtered_ind = [f"{ind}: {count} 檔" for ind, count in ind_counts.items() if count >= 2]
