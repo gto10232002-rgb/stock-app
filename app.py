@@ -132,7 +132,6 @@ def get_stock_base_data_v3():
 
     df_chips = pd.DataFrame()
     headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'}
-    chip_success = False
     
     for i in range(7):
         date_str = (datetime.datetime.now() - datetime.timedelta(days=i)).strftime("%Y%m%d")
@@ -154,7 +153,6 @@ def get_stock_base_data_v3():
                             df_chips['code'] = df_raw['證券代號'].astype(str).str.strip()
                             df_chips['fi'] = pd.to_numeric(df_raw[fi_cols[0]].str.replace(',', ''), errors='coerce') / 1000
                             df_chips['it'] = pd.to_numeric(df_raw[it_cols[0]].str.replace(',', ''), errors='coerce') / 1000
-                            chip_success = True
                             break
         except Exception:
             pass
@@ -208,7 +206,85 @@ def get_single_stock_tech(code):
 
 
 # ==========================================
-# 3. 主程式邏輯
+# 🚀 核心優化：自定義完全鎖定欄位 HTML 生成器
+# ==========================================
+def render_html_sticky_table(df_target):
+    if df_target.empty:
+        return "<p style='color: gray; text-align: center; padding: 20px;'>無符合當前篩選條件的股票</p>"
+        
+    cols_order = ['代號', '名稱', '產業', '今日漲幅%', '股價', '回檔%', '集中度%', '支撐力道', '成交額(億)', '本益比', 'K線連結']
+    
+    # 建置 HTML & 內嵌高相容性 CSS Sticky 樣式
+    html = """
+    <div style="overflow-x: auto; overflow-y: auto; max-height: 620px; border: 1px solid #e6e9ef; border-radius: 6px;">
+        <table style="width: 100%; border-collapse: separate; border-spacing: 0; font-size: 14px; font-family: sans-serif; color: #31333F;">
+            <thead>
+                <tr style="background-color: #f8f9fa;">
+    """
+    
+    # 渲染表頭，並對前兩個欄位進行死鎖固定 (Z-index 設高)
+    for i, col in enumerate(cols_order):
+        th_style = "padding: 12px 14px; font-weight: 600; border-bottom: 2px solid #e6e9ef; text-align: left; position: sticky; top: 0; background-color: #f8f9fa; white-space: nowrap;"
+        if i == 0:    # 代號
+            th_style += " left: 0; z-index: 10; min-width: 65px; max-width: 65px; box-shadow: 2px 0 5px -2px rgba(0,0,0,0.15);"
+        elif i == 1:  # 名稱
+            th_style += " left: 65px; z-index: 10; min-width: 200px; max-width: 200px; box-shadow: 2px 0 5px -2px rgba(0,0,0,0.15); border-right: 1px solid #e6e9ef;"
+        else:
+            th_style += " z-index: 5;"
+        html += f'<th style="{th_style}">{col}</th>'
+    html += "</tr></thead><tbody>"
+    
+    # 渲染資料列
+    for idx, row in df_target.iterrows():
+        bg_color = "white" if idx % 2 == 0 else "#fdfdfd"
+        sticky_bg = "#fafafa" if idx % 2 == 0 else "#f5f5f5" # 凍結欄位專用斑馬紋底色
+        
+        html += f"<tr style='background-color: {bg_color};'>"
+        for i, col in enumerate(cols_order):
+            td_style = "padding: 10px 14px; border-bottom: 1px solid #f0f2f6; white-space: nowrap; text-align: left;"
+            
+            if i == 0:    # 代號
+                td_style += f" position: sticky; left: 0; z-index: 8; background-color: {sticky_bg}; font-weight: bold; min-width: 65px; max-width: 65px; box-shadow: 2px 0 5px -2px rgba(0,0,0,0.15);"
+            elif i == 1:  # 名稱
+                td_style += f" position: sticky; left: 65px; z-index: 8; background-color: {sticky_bg}; min-width: 200px; max-width: 200px; box-shadow: 2px 0 5px -2px rgba(0,0,0,0.15); border-right: 1px solid #e6e9ef;"
+            
+            val = row[col]
+            cell_content = ""
+            
+            # 資料內容格式美化
+            if pd.isna(val) or val is None:
+                cell_content = "-"
+            elif col == 'K線連結':
+                cell_content = f'<a href="{val}" target="_blank" style="color: #ff4b4b; text-decoration: none; font-weight: bold;">📈查看</a>'
+            elif col == '今日漲幅%':
+                try:
+                    v = float(val)
+                    if v > 0:
+                        cell_content = f'<span style="color: #d62728; font-weight: bold;">+{v:.2f} %</span>'  # 台股主流：漲幅呈紅色
+                    elif v < 0:
+                        cell_content = f'<span style="color: #2ca02c; font-weight: bold;">{v:.2f} %</span>'   # 跌幅呈綠色
+                    else:
+                        cell_content = "0.00 %"
+                except:
+                    cell_content = str(val)
+            elif col in ['回檔%', '集中度%']:
+                cell_content = f"{float(val):.2f} %" if isinstance(val, (int, float)) else str(val)
+            elif col in ['股價', '本益比']:
+                cell_content = f"{float(val):.2f}" if isinstance(val, (int, float)) else str(val)
+            elif col == '成交額(億)':
+                cell_content = f"{float(val):.2f} 億" if isinstance(val, (int, float)) else str(val)
+            else:
+                cell_content = str(val)
+                
+            html += f'<td style="{td_style}">{cell_content}</td>'
+        html += "</tr>"
+        
+    html += "</tbody></table></div>"
+    return html
+
+
+# ==========================================
+# 4. 主程式邏輯
 # ==========================================
 try:
     with st.spinner("正在同步最新籌碼與產業數據..."):
@@ -334,34 +410,9 @@ try:
             ind_lines = "\n".join([f"* 📌 **{k}**：{v} 檔" for k, v in ind_counts.items()])
             st.info(f"📊 **近期強勢族群分佈統計**：\n{ind_lines}")
         
-        # 🚀【打包參數進行防崩潰特徵偵測】
-        df_kwargs = {
-            "data": display_df[['代號', '名稱', '產業', '今日漲幅%', '股價', '回檔%', '集中度%', '支撐力道', '成交額(億)', '本益比', 'K線連結']],
-            "column_config": {
-                "代號": st.column_config.TextColumn("代號", width=60),
-                "名稱": st.column_config.TextColumn("名稱", width=140), 
-                "產業": st.column_config.TextColumn("產業", width=100),
-                "今日漲幅%": st.column_config.NumberColumn("今日漲幅%", format="%.2f %%", width=90),
-                "股價": st.column_config.NumberColumn("股價", format="%.2f", width=70),
-                "回檔%": st.column_config.NumberColumn("回檔%", format="%.2f %%", width=80),
-                "集中度%": st.column_config.NumberColumn("集中度%", format="%.2f %%", width=85),
-                "支撐力道": st.column_config.TextColumn("支撐力道", width=95),
-                "成交額(億)": st.column_config.NumberColumn("成交額(億)", format="%.2f 億", width=95),
-                "本益比": st.column_config.NumberColumn("本益比", format="%.2f", width=75),
-                "K線連結": st.column_config.LinkColumn("K線", display_text="📈查看", width=70)
-            },
-            "use_container_width": True, 
-            "hide_index": True,
-            "height": 650
-        }
-
-        try:
-            # 優先嘗試執行原生欄位凍結（適用於 Streamlit 1.35.0+）
-            st.dataframe(**df_kwargs, pin_columns=["代號", "名稱"])
-        except TypeError:
-            # 降級安全模式（適用於舊版本環境，確保不崩潰）
-            st.dataframe(**df_kwargs)
-            st.info("💡 **完美凍結提示**：目前偵測到您的環境 Streamlit 版本較舊，故啟動安全防護。若想體驗完美的「代號與名稱固定不動」效果，請在您的終端機（Terminal）執行升級指令：\n`pip install --upgrade streamlit` 重啟網頁即可！")
+        # 🚀【最終渲染：使用不受環境限制、完全強制鎖定兩欄的 HTML 表格】
+        table_html = render_html_sticky_table(display_df)
+        st.markdown(table_html, unsafe_allow_html=True)
 
 except Exception as e:
     st.error(f"⚠️ 網頁系統執行異常: {e}")
