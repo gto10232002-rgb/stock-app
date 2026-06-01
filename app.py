@@ -362,13 +362,15 @@ try:
         strategy_text = " 或 ".join(active_strategies) if active_strategies else "純基礎條件"
         
         st.success(f"🎯 當前過濾組合：【{strategy_text}】｜ 最終符合條件：{len(display_df)} 檔")
-        
-        # 顯示資料表格 (完美保留原本所有的原生排序、凍結等所有功能)
+
+# 顯示資料表格 (恢復代號、名稱凍結功能，並優化欄位寬度)
         st.dataframe(
             display_df[['代號', '名稱', '產業', '今日漲幅%', '股價', '回檔%', '集中度%', '支撐力道', '成交額(億)', '本益比', 'K線連結']],
             column_config={
-                "代號": st.column_config.Column(pinned=True, width="small"),  # 👈 凍結代號
-                "名稱": st.column_config.Column(pinned=True, width="medium"), # 👈 凍結名稱 (並設定適中寬度，雙行排列最緊湊舒適)
+                # 恢復凍結功能 (pinned=True) 並設定寬度
+                "代號": st.column_config.TextColumn("代號", pinned=True, width="small"),
+                "名稱": st.column_config.TextColumn("名稱", pinned=True, width="medium"), 
+                
                 "今日漲幅%": st.column_config.NumberColumn(format="%.2f %%"),
                 "股價": st.column_config.NumberColumn(format="%.2f"),
                 "回檔%": st.column_config.NumberColumn(format="%.2f %%"),
