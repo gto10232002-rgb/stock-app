@@ -67,20 +67,6 @@ etf_db = {
     "6176": ["00940"], "1513": ["00940"], "2393": ["00940"], "6257": ["00940"]
 }
 
-# 單行緊湊型註解格式，配合限制寬度
-def apply_excel_comment_style(df_input):
-    if df_input.empty:
-        return df_input
-    def merge_etf_info(row):
-        c = str(row['code']).strip()
-        n = str(row['name']).strip()
-        if c in etf_db: 
-            return f"{n} 💬 [{', '.join(etf_db[c])}]"
-        return n
-    df_input['name'] = df_input.apply(merge_etf_info, axis=1)
-    return df_input
-
-
 # ==========================================
 # 2. 獲取台股基礎資料
 # ==========================================
@@ -165,14 +151,18 @@ def get_stock_base_data_v3():
     df = pd.merge(df, df_pe, on='code', how='left') if not df_pe.empty else df.assign(pe=pd.NA)
     df = pd.merge(df, df_ind, on='code', how='left') if not df_ind.empty else df.assign(industry='其他')
     
+    # 📌 完整補齊證交所 01~37 包含細分電子與生技的所有最新產業別代碼對照表
     ind_map = {
         "01": "水泥工業", "02": "食品工業", "03": "塑膠工業", "04": "紡織纖維",
         "05": "電機機械", "06": "電器電纜", "07": "化學工業", "08": "生技醫療業",
         "09": "玻璃陶瓷", "10": "造紙工業", "11": "鋼鐵工業", "12": "橡膠工業",
         "13": "汽車工業", "14": "建材營建", "15": "航運業", "16": "觀光餐旅",
         "17": "金融保險", "18": "貿易百貨", "19": "綜合業", "20": "其他業",
+        "21": "化學工業", "22": "生技醫療業", "23": "油電燃氣業",
         "24": "半導體業", "25": "電腦及週邊設備業", "26": "光電業", "27": "通信網路業", 
-        "28": "電子零組件業", "29": "電子通路業", "30": "資訊服務業", "31": "其他電子業"
+        "28": "電子零組件業", "29": "電子通路業", "30": "資訊服務業", "31": "其他電子業",
+        "32": "文化創意業", "33": "農業科技業", "34": "電子商務業", "35": "綠能環保業",
+        "36": "數位雲端業", "37": "運動休閒業"
     }
     df['industry'] = df['industry'].astype(str).str.strip().map(ind_map).fillna(df['industry'])
     df['chip_ratio'] = ((df['fi'] + df['it']) / df['vol'] * 100).round(2)
@@ -206,7 +196,7 @@ def get_single_stock_tech(code):
 
 
 # ==========================================
-# 🚀 核心優化：自定義完全鎖定欄位 HTML 生成器
+# 🚀 核心恢復：帶有 JavaScript 雙向排序、模糊搜尋與寬度縮減的 HTML 引擎
 # ==========================================
 def render_html_sticky_table(df_target):
     if df_target.empty:
@@ -214,30 +204,34 @@ def render_html_sticky_table(df_target):
         
     cols_order = ['代號', '名稱', '產業', '今日漲幅%', '股價', '回檔%', '集中度%', '支撐力道', '成交額(億)', '本益比', 'K線連結']
     
-    # 建置 HTML & 內嵌高相容性 CSS Sticky 樣式
+    # 建立動態排序與即時搜尋的 HTML/JS 骨架
     html = """
+    <div style="margin-bottom: 12px;">
+        <input type="text" id="tableSearchInput" onkeyup="filterStickyTable()" placeholder="🔍 在此輸入代號、名稱、產業或 ETF (例如: 0050) 進行模糊快搜..." 
+               style="width: 100%; padding: 9px 14px; border: 1px solid #dcdfe6; border-radius: 4px; font-size: 14px; outline: none;">
+    </div>
     <div style="overflow-x: auto; overflow-y: auto; max-height: 620px; border: 1px solid #e6e9ef; border-radius: 6px;">
-        <table style="width: 100%; border-collapse: separate; border-spacing: 0; font-size: 14px; font-family: sans-serif; color: #31333F;">
+        <table id="stickyStockTable" style="width: 100%; border-collapse: separate; border-spacing: 0; font-size: 14px; font-family: sans-serif; color: #31333F;">
             <thead>
                 <tr style="background-color: #f8f9fa;">
     """
     
-    # 渲染表頭，並對前兩個欄位進行死鎖固定 (Z-index 設高)
+    # 渲染表頭，點擊可觸發 JS 排序功能
     for i, col in enumerate(cols_order):
-        th_style = "padding: 12px 14px; font-weight: 600; border-bottom: 2px solid #e6e9ef; text-align: left; position: sticky; top: 0; background-color: #f8f9fa; white-space: nowrap;"
-        if i == 0:    # 代號
+        th_style = "padding: 12px 14px; font-weight: 600; border-bottom: 2px solid #e6e9ef; text-align: left; position: sticky; top: 0; background-color: #f8f9fa; white-space: nowrap; cursor: pointer; user-select: none;"
+        if i == 0:    # 代號 固定
             th_style += " left: 0; z-index: 10; min-width: 65px; max-width: 65px; box-shadow: 2px 0 5px -2px rgba(0,0,0,0.15);"
-        elif i == 1:  # 名稱
-            th_style += " left: 65px; z-index: 10; min-width: 200px; max-width: 200px; box-shadow: 2px 0 5px -2px rgba(0,0,0,0.15); border-right: 1px solid #e6e9ef;"
+        elif i == 1:  # 名稱 固定 (縮減寬度至 140px)
+            th_style += " left: 65px; z-index: 10; min-width: 140px; max-width: 140px; box-shadow: 2px 0 5px -2px rgba(0,0,0,0.15); border-right: 1px solid #e6e9ef;"
         else:
             th_style += " z-index: 5;"
-        html += f'<th style="{th_style}">{col}</th>'
+        html += f'<th style="{th_style}" onclick="sortStickyTable({i})">{col} ⇅</th>'
     html += "</tr></thead><tbody>"
     
-    # 渲染資料列
+    # 渲染每行數據
     for idx, row in df_target.iterrows():
         bg_color = "white" if idx % 2 == 0 else "#fdfdfd"
-        sticky_bg = "#fafafa" if idx % 2 == 0 else "#f5f5f5" # 凍結欄位專用斑馬紋底色
+        sticky_bg = "#fafafa" if idx % 2 == 0 else "#f5f5f5"
         
         html += f"<tr style='background-color: {bg_color};'>"
         for i, col in enumerate(cols_order):
@@ -245,14 +239,21 @@ def render_html_sticky_table(df_target):
             
             if i == 0:    # 代號
                 td_style += f" position: sticky; left: 0; z-index: 8; background-color: {sticky_bg}; font-weight: bold; min-width: 65px; max-width: 65px; box-shadow: 2px 0 5px -2px rgba(0,0,0,0.15);"
-            elif i == 1:  # 名稱
-                td_style += f" position: sticky; left: 65px; z-index: 8; background-color: {sticky_bg}; min-width: 200px; max-width: 200px; box-shadow: 2px 0 5px -2px rgba(0,0,0,0.15); border-right: 1px solid #e6e9ef;"
+            elif i == 1:  # 名稱過長優化：最大寬度 140px，超出自動省略號，滑鼠懸停顯示完整資訊
+                td_style += f" position: sticky; left: 65px; z-index: 8; background-color: {sticky_bg}; min-width: 140px; max-width: 140px; overflow: hidden; text-overflow: ellipsis; box-shadow: 2px 0 5px -2px rgba(0,0,0,0.15); border-right: 1px solid #e6e9ef;"
             
             val = row[col]
             cell_content = ""
+            raw_code = str(row['代號']).strip()
             
-            # 資料內容格式美化
-            if pd.isna(val) or val is None:
+            # 名稱欄位分行精簡化優化
+            if col == '名稱':
+                pure_name = str(val).split("💬")[0].strip()
+                etf_tag = ""
+                if raw_code in etf_db:
+                    etf_tag = f'<div style="font-size: 11px; color: #909399; margin-top: 2px;">💬 [{", ".join(etf_db[raw_code])}]</div>'
+                cell_content = f'<div title="{pure_name if not etf_tag else pure_name + " " + "".join(etf_db[raw_code])}" style="overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 500;">{pure_name}</div>{etf_tag}'
+            elif pd.isna(val) or val is None:
                 cell_content = "-"
             elif col == 'K線連結':
                 cell_content = f'<a href="{val}" target="_blank" style="color: #ff4b4b; text-decoration: none; font-weight: bold;">📈查看</a>'
@@ -260,9 +261,9 @@ def render_html_sticky_table(df_target):
                 try:
                     v = float(val)
                     if v > 0:
-                        cell_content = f'<span style="color: #d62728; font-weight: bold;">+{v:.2f} %</span>'  # 台股主流：漲幅呈紅色
+                        cell_content = f'<span style="color: #d62728; font-weight: bold;">+{v:.2f} %</span>'
                     elif v < 0:
-                        cell_content = f'<span style="color: #2ca02c; font-weight: bold;">{v:.2f} %</span>'   # 跌幅呈綠色
+                        cell_content = f'<span style="color: #2ca02c; font-weight: bold;">{v:.2f} %</span>'
                     else:
                         cell_content = "0.00 %"
                 except:
@@ -280,6 +281,62 @@ def render_html_sticky_table(df_target):
         html += "</tr>"
         
     html += "</tbody></table></div>"
+    
+    # 注入客戶端高效運算不卡頓的 JS 搜尋與雙向排序腳本
+    html += """
+    <script>
+    function filterStickyTable() {
+        var input = document.getElementById("tableSearchInput");
+        var filter = input.value.toUpperCase();
+        var table = document.getElementById("stickyStockTable");
+        var tr = table.getElementsByTagName("tr");
+        for (var i = 1; i < tr.length; i++) {
+            var show = false;
+            var tds = tr[i].getElementsByTagName("td");
+            for (var j = 0; j < tds.length; j++) {
+                if (tds[j]) {
+                    var txtValue = tds[j].textContent || tds[j].innerText;
+                    if (txtValue.toUpperCase().indexOf(filter) > -1) {
+                        show = true;
+                        break;
+                    }
+                }
+            }
+            tr[i].style.display = show ? "" : "none";
+        }
+    }
+
+    var currentSortDir = {};
+    function sortStickyTable(colIndex) {
+        var table = document.getElementById("stickyStockTable");
+        var tbody = table.tBodies[0];
+        var rows = Array.from(tbody.rows);
+        var dir = currentSortDir[colIndex] === 'asc' ? 'desc' : 'asc';
+        currentSortDir = {}; 
+        currentSortDir[colIndex] = dir;
+
+        rows.sort(function(a, b) {
+            var cellA = a.cells[colIndex].innerText.replace(/%/g, '').replace(/億/g, '').replace(/📈查看/g, '').trim();
+            var cellB = b.cells[colIndex].innerText.replace(/%/g, '').replace(/億/g, '').replace(/📈查看/g, '').trim();
+            
+            var valA = parseFloat(cellA);
+            var valB = parseFloat(cellB);
+            
+            if (isNaN(valA) || isNaN(valB)) {
+                return dir === 'asc' ? cellA.localeCompare(cellB, 'zh-Hant') : cellB.localeCompare(cellA, 'zh-Hant');
+            }
+            return dir === 'asc' ? valA - valB : valB - valA;
+        });
+
+        while (tbody.firstChild) {
+            tbody.removeChild(tbody.firstChild);
+        }
+        rows.forEach(function(row) {
+            tbody.appendChild(row);
+        });
+    }
+    </script>
+    """
     return html
 
 
@@ -289,8 +346,6 @@ def render_html_sticky_table(df_target):
 try:
     with st.spinner("正在同步最新籌碼與產業數據..."):
         df = get_stock_base_data_v3()
-        if not df.empty:
-            df = apply_excel_comment_style(df)
     
     if df.empty:
         st.warning("📅 暫時無法取得證交所即時資料。")
@@ -410,7 +465,7 @@ try:
             ind_lines = "\n".join([f"* 📌 **{k}**：{v} 檔" for k, v in ind_counts.items()])
             st.info(f"📊 **近期強勢族群分佈統計**：\n{ind_lines}")
         
-        # 🚀【最終渲染：使用不受環境限制、完全強制鎖定兩欄的 HTML 表格】
+        # 🚀【渲染高整合、支援搜尋與點擊排序、寬度完美的 Sticky HTML 表格】
         table_html = render_html_sticky_table(display_df)
         st.markdown(table_html, unsafe_allow_html=True)
 
