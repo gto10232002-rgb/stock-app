@@ -357,14 +357,23 @@ try:
         if enable_strong: active_strategies.append("近期強勢群組")
         strategy_text = " 或 ".join(active_strategies) if active_strategies else "純基礎條件"
         
+        # 顯示當前策略與總檔數
         st.success(f"🎯 當前過濾組合：【{strategy_text}】｜ 最終符合條件：{len(display_df)} 檔")
         
-        # 顯示資料表格 (已設定代號、名稱欄位凍結固定)
+        # ==========================================
+        # 🔥 重新加回：族群強勢分佈統計統計區
+        # ==========================================
+        if not display_df.empty:
+            ind_counts = display_df['產業'].value_counts()
+            ind_text = " ｜ ".join([f"「{k}」：{v}檔" for k, v in ind_counts.items()])
+            st.info(f"📊 **當前族群強勢分佈**：\n{ind_text}")
+        
+        # 顯示資料表格 (保持左側代號、名稱凍結固定)
         st.dataframe(
             display_df[['代號', '名稱', '產業', '今日漲幅%', '股價', '回檔%', '集中度%', '支撐力道', '成交額(億)', '本益比', 'K線連結']],
             column_config={
-                "代號": st.column_config.Column(pinned=True, width="small"),  # 👈 凍結代號
-                "名稱": st.column_config.Column(pinned=True),                 # 👈 凍結名稱
+                "代號": st.column_config.Column(pinned=True, width="small"),
+                "名稱": st.column_config.Column(pinned=True),
                 "今日漲幅%": st.column_config.NumberColumn(format="%.2f %%"),
                 "股價": st.column_config.NumberColumn(format="%.2f"),
                 "回檔%": st.column_config.NumberColumn(format="%.2f %%"),
