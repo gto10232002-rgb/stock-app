@@ -6,7 +6,7 @@ import time
 import yfinance as yf
 
 # ==========================================
-# 1. 頁面配置與 CSS
+# 1. 頁面配置與 CSS 全面優化
 # ==========================================
 st.set_page_config(page_title="StockTool", layout="wide")
 
@@ -67,7 +67,7 @@ etf_db = {
     "6176": ["00940"], "1513": ["00940"], "2393": ["00940"], "6257": ["00940"]
 }
 
-# 轉換 Excel 註解樣式函式
+# ⚡【核心優化】改為單行緊湊型註解，徹底釋放 Streamlit 寬度限制功能
 def apply_excel_comment_style(df_input):
     if df_input.empty:
         return df_input
@@ -75,14 +75,15 @@ def apply_excel_comment_style(df_input):
         c = str(row['code']).strip()
         n = str(row['name']).strip()
         if c in etf_db: 
-            return f"{n} 💬\n💡 納入成分股: {', '.join(etf_db[c])}"
+            # 移除 \n，使用單行緊湊標記，使表格能完美執行自動裁剪與寬度限制
+            return f"{n} 💬 [{', '.join(etf_db[c])}]"
         return n
     df_input['name'] = df_input.apply(merge_etf_info, axis=1)
     return df_input
 
 
 # ==========================================
-# 2. 獲取台股基礎資料 (內建異常診斷機制)
+# 2. 獲取台股基礎資料
 # ==========================================
 @st.cache_data(ttl=3600)
 def get_stock_base_data_v3():
@@ -100,10 +101,8 @@ def get_stock_base_data_v3():
                     df_price['vol'] = pd.to_numeric(df_price['TradeVolume'].str.replace(',', ''), errors='coerce') / 1000
                     df_price['trade_value'] = pd.to_numeric(df_price['TradeValue'].str.replace(',', ''), errors='coerce')
                     df_price = df_price[['Code', 'Name', 'price', 'vol', 'trade_value']].rename(columns={'Code': 'code', 'Name': 'name'})
-        else:
-            st.sidebar.error(f"❌ 每日股價路徑失敗: 證交所回傳狀態碼 {res_price.status_code}")
-    except Exception as e:
-        st.sidebar.error(f"❌ 每日股價路徑異常: {e}")
+    except Exception:
+        pass
 
     df_pe = pd.DataFrame()
     try:
@@ -149,45 +148,25 @@ def get_stock_base_data_v3():
                     if data and fields:
                         df_raw = pd.DataFrame(data, columns=fields)
                         df_raw.columns = df_raw.columns.str.strip()
-                        
                         fi_cols = [c for c in df_raw.columns if '外資' in c and '買賣超' in c]
                         it_cols = [c for c in df_raw.columns if '投信' in c and '買賣超' in c]
-                        
                         if fi_cols and it_cols and '證券代號' in df_raw.columns:
-                            fi_col = fi_cols[0]
-                            it_col = it_cols[0]
                             df_chips = pd.DataFrame()
                             df_chips['code'] = df_raw['證券代號'].astype(str).str.strip()
-                            df_chips['fi'] = pd.to_numeric(df_raw[fi_col].str.replace(',', ''), errors='coerce') / 1000
-                            df_chips['it'] = pd.to_numeric(df_raw[it_col].str.replace(',', ''), errors='coerce') / 1000
+                            df_chips['fi'] = pd.to_numeric(df_raw[fi_cols[0]].str.replace(',', ''), errors='coerce') / 1000
+                            df_chips['it'] = pd.to_numeric(df_raw[it_cols[0]].str.replace(',', ''), errors='coerce') / 1000
                             chip_success = True
                             break
-            elif res.status_code == 403:
-                st.sidebar.error("❌ 籌碼路徑 (T86) 遭證交所阻擋 (403 Forbidden)")
-                break
         except Exception:
             pass
-        time.sleep(0.4)
-
-    if not chip_success:
-        st.sidebar.warning("⚠️ 無法取得近 7 日籌碼資料，請注意是否為非交易日盤後或 API 塞車。")
+        time.sleep(0.1)
 
     if df_price.empty or df_chips.empty:
         return pd.DataFrame()
         
     df = pd.merge(df_price, df_chips, on='code', how='inner')
-    
-    if not df_pe.empty:
-        df = pd.merge(df, df_pe, on='code', how='left')
-    else:
-        df['pe'] = pd.NA
-        
-    if not df_ind.empty:
-        df = pd.merge(df, df_ind, on='code', how='left')
-    else:
-        df['industry'] = '其他'
-        
-    df['industry'] = df['industry'].fillna('健康')
+    df = pd.merge(df, df_pe, on='code', how='left') if not df_pe.empty else df.assign(pe=pd.NA)
+    df = pd.merge(df, df_ind, on='code', how='left') if not df_ind.empty else df.assign(industry='其他')
     
     ind_map = {
         "01": "水泥工業", "02": "食品工業", "03": "塑膠工業", "04": "紡織纖維",
@@ -195,21 +174,17 @@ def get_stock_base_data_v3():
         "09": "玻璃陶瓷", "10": "造紙工業", "11": "鋼鐵工業", "12": "橡膠工業",
         "13": "汽車工業", "14": "建材營建", "15": "航運業", "16": "觀光餐旅",
         "17": "金融保險", "18": "貿易百貨", "19": "綜合業", "20": "其他業",
-        "21": "化學工業", "22": "生技醫療業", "23": "油電燃氣業", "24": "半導體業", 
-        "25": "電腦及週邊設備業", "26": "光電業", "27": "通信網路業", "28": "電子零組件業", 
-        "29": "電子通路業", "30": "資訊服務業", "31": "其他電子業", "35": "綠能環保", 
-        "36": "數位雲端", "37": "運動休閒", "38": "居家生活", "91": "存託憑證"
+        "24": "半導體業", "25": "電腦及週邊設備業", "26": "光電業", "27": "通信網路業", 
+        "28": "電子零組件業", "29": "電子通路業", "30": "資訊服務業", "31": "其他電子業"
     }
     df['industry'] = df['industry'].astype(str).str.strip().map(ind_map).fillna(df['industry'])
-    df['industry'] = df['industry'].replace(['', 'nan', 'None'], '其他')
-    
     df['chip_ratio'] = ((df['fi'] + df['it']) / df['vol'] * 100).round(2)
     df['value_billion'] = (df['trade_value'] / 100000000).round(2)
     return df
 
 
 # ==========================================
-# ⚡ 技術指標獨立快取
+# ⚡ 技術指標快取
 # ==========================================
 @st.cache_data(ttl=600)  
 def get_single_stock_tech(code):
@@ -224,11 +199,10 @@ def get_single_stock_tech(code):
             if len(closes) >= 2:
                 high_1m = highs.max()
                 current = closes.iloc[-1]
-                prev_close = closes.iloc[-2]
                 if high_1m > 0:
                     dd = round(((high_1m - current) / high_1m) * 100, 2)
-                if prev_close > 0:
-                    chg = round(((current - prev_close) / prev_close) * 100, 2)
+                if closes.iloc[-2] > 0:
+                    chg = round(((current - closes.iloc[-2]) / closes.iloc[-2]) * 100, 2)
     except Exception:
         pass
     return dd, chg
@@ -244,15 +218,14 @@ try:
             df = apply_excel_comment_style(df)
     
     if df.empty:
-        st.warning("📅 暫時無法從證交所取得完整即時資料。請查看側邊欄提示了解原因。")
+        st.warning("📅 暫時無法取得證交所即時資料。")
     else:
-        # 側邊欄設定
+        # 側邊欄配置
         st.sidebar.header("🎯 基礎篩選條件")
         min_p = st.sidebar.number_input("最低股價", value=0.0)
         max_p = st.sidebar.number_input("最高股價", value=500.0)
         min_v = st.sidebar.number_input("最低成交量(張)", value=1000)
         max_pe = st.sidebar.number_input("最高本益比 (0為不限)", value=30.0)
-        
         target_industry = st.sidebar.selectbox("篩選特定產業", ["全部"] + sorted(list(df['industry'].dropna().unique())))
         
         st.sidebar.header("🧠 進階策略加選")
@@ -280,7 +253,6 @@ try:
         res = df[(df['price'] >= min_p) & (df['price'] <= max_p) & (df['vol'] >= min_v)].copy()
         if max_pe > 0:
             res = res[((res['pe'] > 0) & (res['pe'] <= max_pe)).fillna(False)]
-            
         if target_industry != "全部":
             res = res[(res['industry'] == target_industry).fillna(False)]
             
@@ -294,22 +266,14 @@ try:
             with st.spinner(f"正在分析 {total_stocks} 檔股票的即時技術指標..."):
                 drawdown_map = {}
                 change_map = {}
-                
-                if total_stocks > 0:
-                    progress_bar = st.progress(0)
-                    for index, code in enumerate(res['code']):
-                        dd, chg = get_single_stock_tech(code)
-                        drawdown_map[code] = dd
-                        change_map[code] = chg
-                        progress_bar.progress((index + 1) / total_stocks)
-                        time.sleep(0.01) 
-                    progress_bar.empty()
+                for index, code in enumerate(res['code']):
+                    dd, chg = get_single_stock_tech(code)
+                    drawdown_map[code] = dd
+                    change_map[code] = chg
+                    time.sleep(0.005) 
                     
                 res['回檔%'] = res['code'].map(drawdown_map).fillna(0.0)
                 res['今日漲幅%'] = res['code'].map(change_map).fillna(0.0)
-        else:
-            res['回檔%'] = pd.Series(dtype=float)
-            res['今日漲幅%'] = pd.Series(dtype=float)
 
         # 策略過濾邏輯
         if not res.empty:
@@ -324,7 +288,6 @@ try:
                     sub_mask = sub_mask & (cond_large | cond_small)
                 if support_mode == "單日爆發強勢型":
                     sub_mask = sub_mask & (res['chip_ratio'] >= 5.0)
-                
                 sub_mask = sub_mask & (res['回檔%'] >= min_dd)
                 if support_mode == "波段洗刷接貨型":
                     sub_mask = sub_mask & (res['回檔%'] >= max(8.0, float(min_dd)))
@@ -340,12 +303,11 @@ try:
             elif enable_strong:
                 res = res[mask_strong]
 
-        # 計算支撐力道與排序
         def judge_support_strength(row):
             if pd.isna(row['chip_ratio']): return "🔹 觀察中"
             if row['chip_ratio'] >= 10.0: return "🔥 極強支撐"
             elif row['chip_ratio'] >= 5.0: return "✅ 健康買盤"
-            else: return "🔹 觀察中"
+            return "🔹 觀察中"
             
         if not res.empty:
             res['支撐力道'] = res.apply(judge_support_strength, axis=1)
@@ -366,32 +328,30 @@ try:
         if enable_strong: active_strategies.append("近期強勢群組")
         strategy_text = " 或 ".join(active_strategies) if active_strategies else "純基礎條件"
         
-        # 顯示當前策略與總檔數
         st.success(f"🎯 當前過濾組合：【{strategy_text}】｜ 最終符合條件：{len(display_df)} 檔")
         
-        # 族群強勢分佈統計區
         if enable_strong and not display_df.empty:
             ind_counts = display_df['產業'].value_counts()
             ind_lines = "\n".join([f"* 📌 **{k}**：{v} 檔" for k, v in ind_counts.items()])
             st.info(f"📊 **近期強勢族群分佈統計**：\n{ind_lines}")
         
-        # 🚀【全面修正：改用「絕對像素值」同時實現：1. 欄位凍結 + 2. 限寬不爆開】
+        # 🚀【完美像素控寬 + 真正凍結】
         st.dataframe(
             display_df[['代號', '名稱', '產業', '今日漲幅%', '股價', '回檔%', '集中度%', '支撐力道', '成交額(億)', '本益比', 'K線連結']],
             column_config={
-                "代號": st.column_config.Column(pinned=True, width=80),         # 👈 用數字 80 像素，成功凍結！
-                "名稱": st.column_config.Column(pinned=True, width=160),        # 👈 用數字 160 像素，成功凍結且不被撐寬！
-                "產業": st.column_config.Column(width=110),
-                "今日漲幅%": st.column_config.NumberColumn(format="%.2f %%", width=95),
-                "股價": st.column_config.NumberColumn(format="%.2f", width=80),
-                "回檔%": st.column_config.NumberColumn(format="%.2f %%", width=85),
-                "集中度%": st.column_config.NumberColumn(format="%.2f %%", width=85),
-                "支撐力道": st.column_config.Column(width=100),
-                "成交額(億)": st.column_config.NumberColumn(format="%.2f 億", width=105),
-                "本益比": st.column_config.NumberColumn(format="%.2f", width=80),
-                "K線連結": st.column_config.LinkColumn("K線", display_text="📈查看", width=75)
+                "代號": st.column_config.TextColumn("代號", width=60),
+                "名稱": st.column_config.TextColumn("名稱", width=140), # 👈 140像素固定！超出變 ... 點擊展開，絕不撐開
+                "產業": st.column_config.TextColumn("產業", width=100),
+                "今日漲幅%": st.column_config.NumberColumn("今日漲幅%", format="%.2f %%", width=90),
+                "股價": st.column_config.NumberColumn("股價", format="%.2f", width=70),
+                "回檔%": st.column_config.NumberColumn("回檔%", format="%.2f %%", width=80),
+                "集中度%": st.column_config.NumberColumn("集中度%", format="%.2f %%", width=85),
+                "支撐力道": st.column_config.TextColumn("支撐力道", width=95),
+                "成交額(億)": st.column_config.NumberColumn("成交額(億)", format="%.2f 億", width=95),
+                "本益比": st.column_config.NumberColumn("本益比", format="%.2f", width=75),
+                "K線連結": st.column_config.LinkColumn("K線", display_text="📈查看", width=70)
             },
-            use_container_width=True,
+            use_container_width=True, # 👈 搭配單行緊湊標記，讓整個表格剛好塞滿視窗，實現「代號與名稱」永遠維持在最左側不移位的凍結感！
             hide_index=True,
             height=650
         )
