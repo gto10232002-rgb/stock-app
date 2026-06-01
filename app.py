@@ -251,7 +251,7 @@ try:
             res['回檔%'] = pd.Series(dtype=float)
             res['今日漲幅%'] = pd.Series(dtype=float)
 
-        # 核心修正：精確落實進階策略的過濾與聯集/單選邏輯
+        # 策略過濾與單選/聯集邏輯
         if not res.empty:
             mask_drawdown = pd.Series(False, index=res.index)
             mask_strong = pd.Series(False, index=res.index)
@@ -273,14 +273,13 @@ try:
             if enable_strong:
                 mask_strong = (res['今日漲幅%'] >= min_change)
             
-            # 根據加選狀態過濾股票池
+            # 根據篩選狀態精確套用
             if enable_drawdown and enable_strong:
                 res = res[mask_drawdown | mask_strong]
             elif enable_drawdown:
                 res = res[mask_drawdown]
             elif enable_strong:
                 res = res[mask_strong]
-            # 如果都沒有勾選（純基礎條件），則保持原 res 不動
 
         # 計算支撐力道與排序
         def judge_support_strength(row):
@@ -358,29 +357,23 @@ try:
         if enable_strong: active_strategies.append("近期強勢群組")
         strategy_text = " 或 ".join(active_strategies) if active_strategies else "純基礎條件"
         
-        # 是否啟用了進階策略
         is_advanced_strategy_active = enable_drawdown or enable_strong
-        
-        # 初始化 Markdown 訊息內文
         info_markdown = ""
         
         if not display_df.empty:
             total_count = len(display_df)
             current_df = display_df
             
-            # 當有勾選任一進階策略時，才顯示產業統計資訊
             if is_advanced_strategy_active:
                 ind_counts = display_df['產業'].value_counts()
                 filtered_ind = [f"{ind}: {count} 檔" for ind, count in ind_counts.items() if count >= 3]
                 
                 if filtered_ind:
-                    # 使用標準 Markdown 清單語法（前面加 * 號），確保在 Streamlit 元件內強制百分之百換行條列
                     ind_lines = "\n".join([f"* {item}" for item in filtered_ind])
                     info_markdown = f"🎯 當前過濾組合：【{strategy_text}】\n\n**最終符合條件：{total_count} 檔**\n\n{ind_lines}"
                 else:
                     info_markdown = f"🎯 當前過濾組合：【{strategy_text}】\n\n**最終符合條件：{total_count} 檔**\n\n* （目前沒有3檔以上共同產業的主力出現）"
             else:
-                # 純基礎條件：不顯示任何產業統計
                 info_markdown = f"🎯 當前過濾組合：【{strategy_text}】\n\n**最終符合條件：{total_count} 檔**"
         else:
             total_count = 0
@@ -390,15 +383,15 @@ try:
             else:
                 info_markdown = f"🎯 當前過濾組合：【{strategy_text}】\n\n**最終符合條件：{total_count} 檔**"
 
-        # 使用 Streamlit 內建的 st.info 渲染標準 Markdown，完美支援換行、條列且具備原本的精緻外觀
+        # 顯示頂部提示框
         st.info(info_markdown)
         
-        # 顯示資料表格 (固定凍結代號與名稱欄位)
+        # 顯示資料表格 (修正重點：完全回復代號與名稱的凍結，並精確設定名稱欄位寬度為 110)
         st.dataframe(
             current_df[['代號', '名稱', '產業', '今日漲幅%', '股價', '回檔%', '集中度%', '支撐力道', '成交額(億)', '本益比', 'K線連結']],
             column_config={
                 "代號": st.column_config.TextColumn("代號", pinned=True, width="small"),  
-                "名稱": st.column_config.TextColumn("名稱", pinned=True, width="medium"), 
+                "名稱": st.column_config.TextColumn("名稱", pinned=True, width=110), 
                 "今日漲幅%": st.column_config.NumberColumn(format="%.2f %%"),
                 "股價": st.column_config.NumberColumn(format="%.2f"),
                 "回檔%": st.column_config.NumberColumn(format="%.2f %%"),
