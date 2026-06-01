@@ -361,12 +361,13 @@ try:
         st.success(f"🎯 當前過濾組合：【{strategy_text}】｜ 最終符合條件：{len(display_df)} 檔")
         
         # ==========================================
-        # 🔥 重新加回：族群強勢分佈統計統計區
+        # 🔥 優化後：族群強勢分佈統計區 (僅在勾選近期強勢群組時「分行」顯示)
         # ==========================================
-        if not display_df.empty:
+        if enable_strong and not display_df.empty:
             ind_counts = display_df['產業'].value_counts()
-            ind_text = " ｜ ".join([f"「{k}」：{v}檔" for k, v in ind_counts.items()])
-            st.info(f"📊 **當前族群強勢分佈**：\n{ind_text}")
+            # 轉換為分行、加粗的條列式格式，方便一眼閱讀
+            ind_lines = "\n".join([f"* 📌 **{k}**：{v} 檔" for k, v in ind_counts.items()])
+            st.info(f"📊 **近期強勢族群分佈統計**：\n{ind_lines}")
         
         # 顯示資料表格 (保持左側代號、名稱凍結固定)
         st.dataframe(
