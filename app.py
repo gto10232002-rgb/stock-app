@@ -91,47 +91,12 @@ def get_stock_base_data_v3():
         st.sidebar.error(f"❌ 每日股價路徑異常: {e}")
 
 
-
-    df_pe = pd.DataFrame()
-
-    try:
-
-        url_pe = "https://openapi.twse.com.tw/v1/exchangeReport/BWIBBU_ALL"
-
-        res_pe = requests.get(url_pe, timeout=20)
-
-        if res_pe.status_code == 200:
-
-            data_json = res_pe.json()
-
-            if isinstance(data_json, list) and len(data_json) > 0:
-
-                raw_pe = pd.DataFrame(data_json)
-
-                if 'Code' in raw_pe.columns and 'PEratio' in raw_pe.columns:
-
-                    df_pe = raw_pe[['Code', 'PEratio']].rename(columns={'Code': 'code', 'PEratio': 'pe'})
-
-                    df_pe['pe'] = pd.to_numeric(df_pe['pe'].str.replace(',', ''), errors='coerce')
-
-    except Exception:
-
-        pass
-
-
-
-    df_ind = pd.DataFrame()
-
-    try:
-
-        url_industry = "https://openapi.twse.com.tw/v1/opendata/t187ap03_L"
-
-        res_ind = requests.get(url_industry, timeout=20)
-
-        if res_ind.status_code == 200:
-
-            data_json = res_ind.json()
-
+            elif res.status_code == 403:
+                st.sidebar.error("❌ 籌碼路徑 (T86) 遭證交所阻擋 (403 Forbidden)")
+                break
+        except Exception:
+            pass
+            
             if isinstance(data_json, list) and len(data_json) > 0:
 
                 raw_ind = pd.DataFrame(data_json)
@@ -266,32 +231,36 @@ def get_stock_base_data_v3():
         # 統計各產業檔數，並過濾出 >= 2 檔的產業
         ind_counts = display_df['產業'].value_counts()
         filtered_ind = [f"{ind}: {count} 檔" for ind, count in ind_counts.items() if count >= 2]
-        ind_text = f"（{', '.join(filtered_ind)}）" if filtered_ind else ""
+# 統計各產業檔數，並過濾出 3 檔（含）以上的產業
+        if 'display_df' in locals() and not display_df.empty:
+            ind_counts = display_df['產業'].value_counts()
+            filtered_ind = [f"{ind}: {count} 檔" for ind, count in ind_counts.items() if count >= 3]
+            ind_text = f"（{', '.join(filtered_ind)}）" if filtered_ind else "（目前沒有3檔以上共同產業的主力出現）"
+            total_count = len(display_df)
+        else:
+            ind_text = "（目前沒有3檔以上共同產業的主力出現）"
+            total_count = 0
 
-        st.success(f"🎯 當前過濾組合：【{strategy_text}】｜ 最終符合條件：{len(display_df)} 檔 {ind_text}")
-
-
-    if not chip_success:
-
-        st.sidebar.warning("⚠️ 無法取得近 7 日籌碼資料，請注意是否為非交易日盤後或 API 塞車。")
-
-
-
-    if df_price.empty or df_chips.empty:
-
-        return pd.DataFrame()
-
+        st.success(f"🎯 當前過濾組合：【{strategy_text}】｜ 最終符合條件：{total_count} 檔 {ind_text}")
         
-
-    df = pd.merge(df_price, df_chips, on='code', how='inner')
-
-    
-
-    if not df_pe.empty:
-
-        df = pd.merge(df, df_pe, on='code', how='left')
-
-    else:
+        # 顯示資料表格 (修正：正確將代號、名稱欄位凍結固定)
+        st.dataframe(
+            display_df[['代號', '名稱', '產業', '今日漲幅%', '股價', '回檔%', '集中度%', '支撐力道', '成交額(億)', '本益比', 'K線連結']],
+            column_config={
+                "代號": st.column_config.TextColumn("代號", pinned=True, width="small"),  # 👈 修正為 TextColumn 並凍結
+                "名稱": st.column_config.TextColumn("名稱", pinned=True, width="medium"), # 👈 修正為 TextColumn 並凍結
+                "今日漲幅%": st.column_config.NumberColumn(format="%.2f %%"),
+                "股價": st.column_config.NumberColumn(format="%.2f"),
+                "回檔%": st.column_config.NumberColumn(format="%.2f %%"),
+                "集中度%": st.column_config.NumberColumn(format="%.2f %%"),
+                "成交額(億)": st.column_config.NumberColumn(format="%.2f 億"),
+                "本益比": st.column_config.NumberColumn(format="%.2f"),
+                "K線連結": st.column_config.LinkColumn("K線", display_text="📈查看")
+            },
+            use_container_width=True,
+            hide_index=True,
+            height=650
+        )
 
         df['pe'] = pd.NA
 
