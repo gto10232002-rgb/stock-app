@@ -338,14 +338,13 @@ try:
             "6176": ["00940"], "1513": ["00940"], "2393": ["00940"], "6257": ["00940"]
         }
 
-        # 🚀 【核心修改：Excel 註解效果】
-        # 透過置入多個全寬空格，迫使 ETF 資訊移出預覽範圍，觸發原生懸停提示機制
+        # 🚀【優化修改：利用換行符實現 Excel 註解效果】
+        # 使用 \n 將註解推至第二行，這樣完全不會把欄位拉寬，但滑鼠移上去時能完美觸發提示框
         def merge_etf_info(row):
             c = str(row['code']).strip()
             n = str(row['name']).strip()
             if c in etf_db: 
-                # 全寬空格不會被瀏覽器輕易壓縮，確保平常看只有乾淨名字，滑鼠移上去或點選才顯示彈窗
-                return f"{n} 　　　　　　　　　　 💡 納入成分股: {', '.join(etf_db[c])}"
+                return f"{n}\n💡 納入成分股: {', '.join(etf_db[c])}"
             return n
 
         if not res.empty:
@@ -370,12 +369,12 @@ try:
             ind_lines = "\n".join([f"* 📌 **{k}**：{v} 檔" for k, v in ind_counts.items()])
             st.info(f"📊 **近期強勢族群分佈統計**：\n{ind_lines}")
         
-        # 顯示資料表格 (移除獨立備註欄，將乾淨清爽的版面留給核心數據)
+        # 顯示資料表格 (完全還原您原本的凍結欄位與排版設定)
         st.dataframe(
             display_df[['代號', '名稱', '產業', '今日漲幅%', '股價', '回檔%', '集中度%', '支撐力道', '成交額(億)', '本益比', 'K線連結']],
             column_config={
-                "代號": st.column_config.Column(pinned=True, width="small"),
-                "名稱": st.column_config.Column(pinned=True, width="medium"), # 👈 固定名稱寬度，完美達成「截斷/隱藏」與「懸停顯示」效果
+                "代號": st.column_config.Column(pinned=True, width="small"), # 👈 保持您原本的凍結
+                "名稱": st.column_config.Column(pinned=True),                # 👈 保持您原本的凍結，不設定固定寬度
                 "今日漲幅%": st.column_config.NumberColumn(format="%.2f %%"),
                 "股價": st.column_config.NumberColumn(format="%.2f"),
                 "回檔%": st.column_config.NumberColumn(format="%.2f %%"),
