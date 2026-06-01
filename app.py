@@ -217,7 +217,17 @@ def get_stock_base_data_v3():
             pass
 
         time.sleep(0.4)
+        active_strategies = []
+        if enable_drawdown: active_strategies.append("回檔策略")
+        if enable_strong: active_strategies.append("近期強勢群組")
+        strategy_text = " 或 ".join(active_strategies) if active_strategies else "純基礎條件"
+        
+        # 統計各產業檔數，並過濾出 >= 2 檔的產業
+        ind_counts = display_df['產業'].value_counts()
+        filtered_ind = [f"{ind}: {count} 檔" for ind, count in ind_counts.items() if count >= 2]
+        ind_text = f"（{', '.join(filtered_ind)}）" if filtered_ind else ""
 
+        st.success(f"🎯 當前過濾組合：【{strategy_text}】｜ 最終符合條件：{len(display_df)} 檔 {ind_text}")
 
 
     if not chip_success:
