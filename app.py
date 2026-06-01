@@ -334,10 +334,10 @@ try:
             ind_lines = "\n".join([f"* 📌 **{k}**：{v} 檔" for k, v in ind_counts.items()])
             st.info(f"📊 **近期強勢族群分佈統計**：\n{ind_lines}")
         
-        # 🚀【正解：利用 pin_columns 直接鎖定代號、名稱欄位】
-        st.dataframe(
-            display_df[['代號', '名稱', '產業', '今日漲幅%', '股價', '回檔%', '集中度%', '支撐力道', '成交額(億)', '本益比', 'K線連結']],
-            column_config={
+        # 🚀【打包參數進行防崩潰特徵偵測】
+        df_kwargs = {
+            "data": display_df[['代號', '名稱', '產業', '今日漲幅%', '股價', '回檔%', '集中度%', '支撐力道', '成交額(億)', '本益比', 'K線連結']],
+            "column_config": {
                 "代號": st.column_config.TextColumn("代號", width=60),
                 "名稱": st.column_config.TextColumn("名稱", width=140), 
                 "產業": st.column_config.TextColumn("產業", width=100),
@@ -350,11 +350,18 @@ try:
                 "本益比": st.column_config.NumberColumn("本益比", format="%.2f", width=75),
                 "K線連結": st.column_config.LinkColumn("K線", display_text="📈查看", width=70)
             },
-            pin_columns=["代號", "名稱"], # 👈 這是 Streamlit 官方原生凍結語法！絕對成功凍結
-            use_container_width=True, 
-            hide_index=True,
-            height=650
-        )
+            "use_container_width": True, 
+            "hide_index": True,
+            "height": 650
+        }
+
+        try:
+            # 優先嘗試執行原生欄位凍結（適用於 Streamlit 1.35.0+）
+            st.dataframe(**df_kwargs, pin_columns=["代號", "名稱"])
+        except TypeError:
+            # 降級安全模式（適用於舊版本環境，確保不崩潰）
+            st.dataframe(**df_kwargs)
+            st.info("💡 **完美凍結提示**：目前偵測到您的環境 Streamlit 版本較舊，故啟動安全防護。若想體驗完美的「代號與名稱固定不動」效果，請在您的終端機（Terminal）執行升級指令：\n`pip install --upgrade streamlit` 重啟網頁即可！")
 
 except Exception as e:
     st.error(f"⚠️ 網頁系統執行異常: {e}")
