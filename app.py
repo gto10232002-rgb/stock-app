@@ -721,7 +721,7 @@ try:
 
                 "代號": st.column_config.Column(pinned=True, width="small"),  # 👈 凍結代號
 
-                "名稱": st.column_config.Column(pinned=True, width="medium"), # 👈 凍結名稱
+                "名稱": st.column_config.Column(pinned=True, width=140), # 👈 凍結名稱
 
                 "今日漲幅%": st.column_config.NumberColumn(format="%.2f %%"),
 
