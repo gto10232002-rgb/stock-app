@@ -40,6 +40,7 @@ st.markdown("""
 
 
 st.markdown("### 📊 台股多元策略選股系統")
+st.caption("📌 關盤資訊會在每日 18:30 之後導入")
 
 
 
