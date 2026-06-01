@@ -133,6 +133,7 @@ def get_stock_base_data_v3():
         
     df['industry'] = df['industry'].fillna('其他')
     
+    # 📌 補齊證交所 01~37 最新完整產業代碼（包含細分的化學、生技醫療及各類電子與休閒產業）
     ind_map = {
         "01": "水泥工業", "02": "食品工業", "03": "塑膠工業", "04": "紡織纖維",
         "05": "電機機械", "06": "電器電纜", "07": "化學工業", "08": "生技醫療業",
@@ -141,8 +142,9 @@ def get_stock_base_data_v3():
         "17": "金融保險", "18": "貿易百貨", "19": "綜合業", "20": "其他業",
         "21": "化學工業", "22": "生技醫療業", "23": "油電燃氣業", "24": "半導體業", 
         "25": "電腦及週邊設備業", "26": "光電業", "27": "通信網路業", "28": "電子零組件業", 
-        "29": "電子通路業", "30": "資訊服務業", "31": "其他電子業", "35": "綠能環保", 
-        "36": "數位雲端", "37": "運動休閒", "38": "居家生活", "91": "存託憑證"
+        "29": "電子通路業", "30": "資訊服務業", "31": "其他電子業", "32": "文化創意業",
+        "33": "農業科技業", "34": "電子商務業", "35": "綠能環保", "36": "數位雲端", 
+        "37": "運動休閒", "38": "居家生活", "91": "存託憑證"
     }
     df['industry'] = df['industry'].astype(str).str.strip().map(ind_map).fillna(df['industry'])
     df['industry'] = df['industry'].replace(['', 'nan', 'None'], '其他')
@@ -338,10 +340,12 @@ try:
             "6176": ["00940"], "1513": ["00940"], "2393": ["00940"], "6257": ["00940"]
         }
 
+        # 💡 核心優化：利用換行符將 ETF 代號排在股票名稱下方，使名稱欄位視覺上顯著變窄縮短，更方便橫向閱讀
         def merge_etf_info(row):
             c = str(row['code']).strip()
             n = str(row['name']).strip()
-            if c in etf_db: return f"{n} ({','.join(etf_db[c])})"
+            if c in etf_db: 
+                return f"{n}\n({','.join(etf_db[c])})"
             return n
 
         if not res.empty:
@@ -359,12 +363,12 @@ try:
         
         st.success(f"🎯 當前過濾組合：【{strategy_text}】｜ 最終符合條件：{len(display_df)} 檔")
         
-        # 顯示資料表格 (已設定代號、名稱欄位凍結固定)
+        # 顯示資料表格 (完美保留原本所有的原生排序、凍結等所有功能)
         st.dataframe(
             display_df[['代號', '名稱', '產業', '今日漲幅%', '股價', '回檔%', '集中度%', '支撐力道', '成交額(億)', '本益比', 'K線連結']],
             column_config={
                 "代號": st.column_config.Column(pinned=True, width="small"),  # 👈 凍結代號
-                "名稱": st.column_config.Column(pinned=True),                 # 👈 凍結名稱
+                "名稱": st.column_config.Column(pinned=True, width="medium"), # 👈 凍結名稱 (並設定適中寬度，雙行排列最緊湊舒適)
                 "今日漲幅%": st.column_config.NumberColumn(format="%.2f %%"),
                 "股價": st.column_config.NumberColumn(format="%.2f"),
                 "回檔%": st.column_config.NumberColumn(format="%.2f %%"),
