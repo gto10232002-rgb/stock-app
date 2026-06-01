@@ -338,14 +338,14 @@ try:
             "6176": ["00940"], "1513": ["00940"], "2393": ["00940"], "6257": ["00940"]
         }
 
-        def merge_etf_info(row):
+        # 🚀 調整為提取成乾淨的備註文字
+        def get_etf_remark(row):
             c = str(row['code']).strip()
-            n = str(row['name']).strip()
-            if c in etf_db: return f"{n} ({','.join(etf_db[c])})"
-            return n
+            if c in etf_db: return ", ".join(etf_db[c])
+            return ""
 
         if not res.empty:
-            res['name'] = res.apply(merge_etf_info, axis=1)
+            res['備註'] = res.apply(get_etf_remark, axis=1) # 👈 將 ETF 資訊單獨存入備註欄位
 
         display_df = res.rename(columns={
             'code': '代號', 'name': '名稱', 'industry': '產業', 'price': '股價', 
@@ -360,18 +360,15 @@ try:
         # 顯示當前策略與總檔數
         st.success(f"🎯 當前過濾組合：【{strategy_text}】｜ 最終符合條件：{len(display_df)} 檔")
         
-        # ==========================================
-        # 🔥 優化後：族群強勢分佈統計區 (僅在勾選近期強勢群組時「分行」顯示)
-        # ==========================================
+        # 族群強勢分佈統計區 (僅在勾選近期強勢群組時「分行」顯示)
         if enable_strong and not display_df.empty:
             ind_counts = display_df['產業'].value_counts()
-            # 轉換為分行、加粗的條列式格式，方便一眼閱讀
             ind_lines = "\n".join([f"* 📌 **{k}**：{v} 檔" for k, v in ind_counts.items()])
             st.info(f"📊 **近期強勢族群分佈統計**：\n{ind_lines}")
         
-        # 顯示資料表格 (保持左側代號、名稱凍結固定)
+        # 顯示資料表格 (保持左側代號、名稱凍結固定，並將「備註」獨立呈現)
         st.dataframe(
-            display_df[['代號', '名稱', '產業', '今日漲幅%', '股價', '回檔%', '集中度%', '支撐力道', '成交額(億)', '本益比', 'K線連結']],
+            display_df[['代號', '名稱', '產業', '今日漲幅%', '股價', '回檔%', '集中度%', '支撐力道', '成交額(億)', '本益比', '備註', 'K線連結']],
             column_config={
                 "代號": st.column_config.Column(pinned=True, width="small"),
                 "名稱": st.column_config.Column(pinned=True),
@@ -381,6 +378,7 @@ try:
                 "集中度%": st.column_config.NumberColumn(format="%.2f %%"),
                 "成交額(億)": st.column_config.NumberColumn(format="%.2f 億"),
                 "本益比": st.column_config.NumberColumn(format="%.2f"),
+                "備註": st.column_config.Column(width="medium"), # 👈 新增備註欄配置
                 "K線連結": st.column_config.LinkColumn("K線", display_text="📈查看")
             },
             use_container_width=True,
