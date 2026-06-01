@@ -18,7 +18,7 @@ st.set_page_config(
     layout="wide",
 )
 
-st.markdown("""
+st.markdown(""
 <style>
     .block-container {
         padding-top: 1.0rem !important;
