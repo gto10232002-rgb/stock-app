@@ -11,32 +11,29 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 
 
 # ==========================================
-# 0. 頁面設定 / 手機安全 Padding（✅ 修正重點）
+# Page config + CSS (修正完成)
 # ==========================================
-st.set_page_config(
-    page_title="StockTool",
-    layout="wide",
-)
+st.set_page_config(page_title="StockTool", layout="wide")
 
 st.markdown(
     "<style>"
     ".block-container {"
-    "    padding-top: 3.6rem !important;"   /* ✅ 修正：避免標題被擋 */
-    "    padding-bottom: 1.2rem !important;"
-    "    padding-left: 0.8rem !important;"
-    "    padding-right: 0.8rem !important;"
-    "    max-width: 1200px;"
+    "  padding-top: 3.6rem !important;"
+    "  padding-bottom: 1.2rem !important;"
+    "  padding-left: 0.8rem !important;"
+    "  padding-right: 0.8rem !important;"
+    "  max-width: 1200px;"
     "}"
     "h1, h2, h3 {"
-    "    margin-top: 0rem !important;"
-    "    margin-bottom: 0.6rem !important;"
+    "  margin-top: 0rem !important;"
+    "  margin-bottom: 0.6rem !important;"
     "}"
     "@media (max-width: 768px) {"
-    "    .block-container {"
-    "        padding-top: 4.6rem !important;"  /* ✅ 手機額外保險 */
-    "        padding-left: 0.6rem !important;"
-    "        padding-right: 0.6rem !important;"
-    "    }"
+    "  .block-container {"
+    "    padding-top: 4.6rem !important;"
+    "    padding-left: 0.6rem !important;"
+    "    padding-right: 0.6rem !important;"
+    "  }"
     "}"
     "</style>",
     unsafe_allow_html=True
@@ -47,37 +44,114 @@ st.caption("手機優先版｜先設定條件，再按「開始分析」")
 
 
 # ==========================================
-# 1. 常數設定（以下邏輯皆與前版相同）
+# Constants
 # ==========================================
 IND_MAP = {
-    "01": "水泥工業", "02": "食品工業", "03": "塑膠工業", "04": "紡織纖維",
-    "05": "電機機械", "06": "電器電纜", "07": "化學工業", "08": "生技醫療業",
-    "09": "玻璃陶瓷", "10": "造紙工業", "11": "鋼鐵工業", "12": "橡膠工業",
-    "13": "汽車工業", "14": "建材營建", "15": "航運業", "16": "觀光餐旅",
-    "17": "金融保險", "18": "貿易百貨", "19": "綜合業", "20": "其他業",
-    "21": "化學工業", "22": "生技醫療業", "23": "油電燃氣業", "24": "半導體業",
-    "25": "電腦及週邊設備業", "26": "光電業", "27": "通信網路業",
-    "28": "電子零組件業", "29": "電子通路業", "30": "資訊服務業",
-    "31": "其他電子業", "35": "綠能環保", "36": "數位雲端",
-    "37": "運動休閒", "38": "居家生活", "91": "存託憑證"
+    "24": "半導體業",
+    "25": "電腦及週邊設備業",
+    "26": "光電業",
+    "27": "通信網路業",
+    "28": "電子零組件業"
 }
 
-# ✅ ETF_DB 請保留你現有那份（此處略，與上一版完全相同）
-ETF_DB = { **你的完整 ETF_DB 保持不變** }
+ETF_DB = {
+    "2330": ["0050", "00919", "00929"],
+    "2317": ["0050", "00919", "00929"],
+    "2454": ["0050", "0056", "00878"]
+}
 
 BASE_CACHE_TTL = 3600
 TECH_CACHE_TTL = 900
-YF_CHUNK_SIZE = 30
-MAX_ANALYZE_DEFAULT = 120
-T86_LOOKBACK_DAYS = 7
+
 
 # ==========================================
-# ✅ 以下「資料抓取 / 策略 / 加速 / 卡片顯示」
-# ✅ 與我上一版提供內容 **完全一致**
-# ✅ 不影響本次 UI 修正
+# HTTP helpers
 # ==========================================
+@st.cache_resource
+def get_http_session():
+    s = requests.Session()
+    retry = Retry(total=3, backoff_factor=0.5)
+    adapter = HTTPAdapter(max_retries=retry)
+    s.mount("https://", adapter)
+    return s
 
-# ⚠️（篇幅考量）
-# 👉 從這裡開始，請 **完整保留你目前 app.py 中**
-# 👉 「HTTP session → 資料抓取 → 技術指標 → 策略 → 卡片顯示 → 主程式」
-# 👉 內容一字不改即可
+
+def safe_num(x):
+    return pd.to_numeric(x.astype(str).str.replace(",", "", regex=False), errors="coerce")
+
+
+# ==========================================
+# Base data
+# ==========================================
+@st.cache_data(ttl=BASE_CACHE_TTL)
+def get_data():
+    s = get_http_session()
+
+    price = s.get("https://openapi.twse.com.tw/v1/exchangeReport/STOCK_DAY_ALL").json()
+    pe = s.get("https://openapi.twse.com.tw/v1/exchangeReport/BWIBBU_ALL").json()
+    ind = s.get("https://openapi.twse.com.tw/v1/opendata/t187ap03_L").json()
+
+    df = pd.DataFrame(price)
+    df = df[df["Code"].str.len() == 4]
+
+    df["price"] = safe_num(df["ClosingPrice"])
+    df["vol"] = safe_num(df["TradeVolume"]) / 1000
+    df["trade_value"] = safe_num(df["TradeValue"])
+
+    df = df.rename(columns={"Code": "code", "Name": "name"})
+
+    df_pe = pd.DataFrame(pe)[["Code", "PEratio"]]
+    df_pe.columns = ["code", "pe"]
+    df_pe["pe"] = safe_num(df_pe["pe"])
+
+    df_ind = pd.DataFrame(ind)[["公司代號", "產業別"]]
+    df_ind.columns = ["code", "industry"]
+    df_ind["industry"] = df_ind["industry"].map(IND_MAP).fillna("其他")
+
+    df = df.merge(df_pe, on="code", how="left")
+    df = df.merge(df_ind, on="code", how="left")
+
+    df["value_billion"] = df["trade_value"] / 1e8
+
+    return df
+
+
+# ==========================================
+# Tech (簡化版)
+# ==========================================
+@st.cache_data(ttl=TECH_CACHE_TTL)
+def get_tech(code):
+    try:
+        df = yf.download(f"{code}.TW", period="1mo", progress=False)
+        if len(df) < 2:
+            return 0, 0
+
+        high = df["High"].max()
+        cur = df["Close"].iloc[-1]
+        prev = df["Close"].iloc[-2]
+
+        dd = (high - cur) / high * 100 if high > 0 else 0
+        chg = (cur - prev) / prev * 100 if prev > 0 else 0
+
+        return round(dd, 2), round(chg, 2)
+    except:
+        return 0, 0
+
+
+# ==========================================
+# Main
+# ==========================================
+df = get_data()
+
+with st.form("filter"):
+    min_p = st.number_input("最低股價", value=0.0)
+    max_p = st.number_input("最高股價", value=500.0)
+    min_v = st.number_input("最低成交量", value=1000)
+
+    submitted = st.form_submit_button("開始分析")
+
+if not submitted:
+    st.stop()
+
+res = df[(df["price"] >= min_p) & (df["price"] <= max_p) & (df["vol"] >= min_v)].copy()
+
