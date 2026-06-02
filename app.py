@@ -24,7 +24,7 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 st.markdown("### 📊 台股多元策略選股系統")
-st.caption("📌 盤後最新資訊每日 18:30 後, 完整導入")
+st.caption("📌 關盤資訊會在每日 18:30 之後導入")
 
 # ==========================================
 # 2. 獲取台股基礎資料
@@ -131,7 +131,7 @@ def get_stock_base_data_v3():
     else:
         df['industry'] = '其他'
         
-    df['industry'] = df['industry'].fillna('其他')
+    df['industry'] = df['industry'].fillna('Other')
     
     ind_map = {
         "01": "水泥工業", "02": "食品工業", "03": "塑膠工業", "04": "紡織纖維",
@@ -147,7 +147,17 @@ def get_stock_base_data_v3():
     df['industry'] = df['industry'].astype(str).str.strip().map(ind_map).fillna(df['industry'])
     df['industry'] = df['industry'].replace(['', 'nan', 'None'], '其他')
     
-    df['chip_ratio'] = ((df['fi'] + df['it']) / df['vol'] * 100).round(2)
+    # --------------------------------------------------
+    # 🛠️ 集中度計算優化：防呆除以 0、並用 clip 將上限鎖在 100.0%
+    # --------------------------------------------------
+    df['chip_ratio'] = 0.0
+    mask_vol_not_zero = df['vol'] > 0
+    if mask_vol_not_zero.any():
+        df.loc[mask_vol_not_zero, 'chip_ratio'] = (
+            ((df.loc[mask_vol_not_zero, 'fi'] + df.loc[mask_vol_not_zero, 'it']) / df.loc[mask_vol_not_zero, 'vol'] * 100)
+        ).round(2)
+    df['chip_ratio'] = df['chip_ratio'].clip(upper=100.0)
+    
     df['value_billion'] = (df['trade_value'] / 100000000).round(2)
     return df
 
@@ -386,7 +396,7 @@ try:
         # 顯示頂部提示框
         st.info(info_markdown)
         
-        # 顯示資料表格 (修正重點：完全回復代號與名稱的凍結，並精確設定名稱欄位寬度為 110)
+        # 顯示資料表格 (代號名稱凍結、名稱寬度 110 固定)
         st.dataframe(
             current_df[['代號', '名稱', '產業', '今日漲幅%', '股價', '回檔%', '集中度%', '支撐力道', '成交額(億)', '本益比', 'K線連結']],
             column_config={
