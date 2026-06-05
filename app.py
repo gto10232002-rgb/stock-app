@@ -24,7 +24,7 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 st.markdown("### 📊 台股多元策略選股系統")
-st.caption("📌 關盤資訊會在每日 18:30 之後完整導入")
+st.caption("📌 關盤資訊會在每日 18:30 之後導入")
 
 # ==========================================
 # 2. 獲取台股基礎資料
@@ -131,7 +131,7 @@ def get_stock_base_data_v3():
     else:
         df['industry'] = '其他'
         
-    df['industry'] = df['industry'].fillna('Other')
+    df['industry'] = df['industry'].fillna('其他')
     
     ind_map = {
         "01": "水泥工業", "02": "食品工業", "03": "塑膠工業", "04": "紡織纖維",
@@ -147,9 +147,7 @@ def get_stock_base_data_v3():
     df['industry'] = df['industry'].astype(str).str.strip().map(ind_map).fillna(df['industry'])
     df['industry'] = df['industry'].replace(['', 'nan', 'None'], '其他')
     
-    # --------------------------------------------------
-    # 🛠️ 集中度計算優化：防呆除以 0、並用 clip 將上限鎖在 100.0%
-    # --------------------------------------------------
+    # 計算集中度並進行上限截斷防呆
     df['chip_ratio'] = 0.0
     mask_vol_not_zero = df['vol'] > 0
     if mask_vol_not_zero.any():
@@ -261,7 +259,7 @@ try:
             res['回檔%'] = pd.Series(dtype=float)
             res['今日漲幅%'] = pd.Series(dtype=float)
 
-        # 策略過濾與單選/聯集邏輯
+        # 策略過濾邏輯
         if not res.empty:
             mask_drawdown = pd.Series(False, index=res.index)
             mask_strong = pd.Series(False, index=res.index)
@@ -283,7 +281,6 @@ try:
             if enable_strong:
                 mask_strong = (res['今日漲幅%'] >= min_change)
             
-            # 根據篩選狀態精確套用
             if enable_drawdown and enable_strong:
                 res = res[mask_drawdown | mask_strong]
             elif enable_drawdown:
@@ -361,7 +358,6 @@ try:
             'chip_ratio': '集中度%', 'pe': '本益比', 'value_billion': '成交額(億)'
         })
         
-        # 建立策略標題文字
         active_strategies = []
         if enable_drawdown: active_strategies.append("回檔策略")
         if enable_strong: active_strategies.append("近期強勢群組")
@@ -393,15 +389,14 @@ try:
             else:
                 info_markdown = f"🎯 當前過濾組合：【{strategy_text}】\n\n**最終符合條件：{total_count} 檔**"
 
-        # 顯示頂部提示框
         st.info(info_markdown)
         
-        # 顯示資料表格 (代號名稱凍結、名稱寬度 110 固定)
+        # 核心修正點：將名稱欄位寬度改為安全穩定的字串型態 "medium"（約 150px），維持同時啟用 pinned=True 凍結功能不閃退
         st.dataframe(
             current_df[['代號', '名稱', '產業', '今日漲幅%', '股價', '回檔%', '集中度%', '支撐力道', '成交額(億)', '本益比', 'K線連結']],
             column_config={
                 "代號": st.column_config.TextColumn("代號", pinned=True, width="small"),  
-                "名稱": st.column_config.TextColumn("名稱", pinned=True, width=110), 
+                "名稱": st.column_config.TextColumn("名稱", pinned=True, width="medium"), 
                 "今日漲幅%": st.column_config.NumberColumn(format="%.2f %%"),
                 "股價": st.column_config.NumberColumn(format="%.2f"),
                 "回檔%": st.column_config.NumberColumn(format="%.2f %%"),
