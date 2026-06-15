@@ -84,10 +84,24 @@ def get_stock_base_data_v3():
             continue
 
     df = pd.merge(df_price, df_chips, on='code', how='left') if not df_chips.empty else df_price.copy()
-    for col in ['fi', 'it']:
-        if col not in df.columns: df[col] = 0.0
-    df['fi'] = df['fi'].fillna(0.0)
-    df['it'] = df['it'].fillna(0.0)
+    
+    # --- 🛠️ 除錯修改區塊開始：安全運算，徹底避開 .loc 維度異常 ---
+    
+    # 1. 確保欄位存在且為數值型態，防呆處理
+    df['fi'] = pd.to_numeric(df.get('fi', 0.0), errors='coerce').fillna(0.0)
+    df['it'] = pd.to_numeric(df.get('it', 0.0), errors='coerce').fillna(0.0)
+    df['vol'] = pd.to_numeric(df.get('vol', 0.0), errors='coerce').fillna(0.0)
+    df['trade_value'] = pd.to_numeric(df.get('trade_value', 0.0), errors='coerce').fillna(0.0)
+
+    # 2. 取代 0 為 NA 以避免除以零報錯，全面使用向量化運算取代切片賦值
+    safe_vol = df['vol'].replace(0, pd.NA)
+    df['chip_ratio'] = (((df['fi'] + df['it']) / safe_vol) * 100).round(2)
+    
+    # 3. 限制最高 100%，並將 NA 乾淨補回 0.0
+    df['chip_ratio'] = df['chip_ratio'].clip(upper=100.0).fillna(0.0)
+    df['value_billion'] = (df['trade_value'] / 100000000).round(2).fillna(0.0)
+    
+    # --- 🛠️ 除錯修改區塊結束 ---
 
     df = pd.merge(df, df_pe, on='code', how='left') if not df_pe.empty else df.assign(pe=pd.NA)
     df = pd.merge(df, df_ind, on='code', how='left') if not df_ind.empty else df.assign(industry='其他')
@@ -103,19 +117,12 @@ def get_stock_base_data_v3():
     df['industry'] = df['industry'].astype(str).str.strip().map(ind_map).fillna(df['industry'])
     df['industry'] = df['industry'].replace(['', 'nan', 'None', 'NaN'], '其他').fillna('其他')
 
-    df['chip_ratio'] = 0.0
-    v_mask = df['vol'] > 0
-    df.loc[v_mask, 'chip_ratio'] = (((df.loc[v_mask, 'fi'] + df.loc[v_mask, 'it']) / df.loc[v_mask, 'vol']) * 100).round(2)
-    df['chip_ratio'] = df['chip_ratio'].clip(upper=100.0).fillna(0.0)
-    df['value_billion'] = (df['trade_value'] / 100000000).round(2).fillna(0.0)
-
     return df[cols]
 
 # ==========================================
-# ⚡ 高速多執行緒獲取技術指標 (徹底棄用 yf.download)
+# ⚡ 高速多執行緒獲取技術指標
 # ==========================================
 def get_single_stock_tech(c):
-    """獨立處理單檔股票，結構絕對穩定，不會互相干擾"""
     tk = f"{str(c).strip()}.TW"
     dd, chg = 0.0, 0.0
     try:
@@ -130,7 +137,7 @@ def get_single_stock_tech(c):
                 if h_max > 0: dd = round(((h_max - cur) / h_max) * 100, 2)
                 if prev > 0: chg = round(((cur - prev) / prev) * 100, 2)
     except Exception:
-        pass # 個別股票報錯直接回傳 0.0，不影響整體
+        pass 
     return c, dd, chg
 
 def batch_append_tech_indicators(res_df):
@@ -142,7 +149,6 @@ def batch_append_tech_indicators(res_df):
     codes = res_df['code'].tolist()
     dd_map, chg_map = {}, {}
     
-    # 啟動 8 個執行緒同時向 Yahoo 要資料，兼顧速度與穩定度
     with concurrent.futures.ThreadPoolExecutor(max_workers=8) as executor:
         results = executor.map(get_single_stock_tech, codes)
         
