@@ -3,6 +3,7 @@ import pandas as pd
 import requests
 import datetime
 import yfinance as yf
+import concurrent.futures
 
 # ==========================================
 # 1. 頁面配置與 CSS
@@ -111,55 +112,43 @@ def get_stock_base_data_v3():
     return df[cols]
 
 # ==========================================
-# ⚡ 批次獲取技術指標 (完美解決 Series / DataFrame 結構突變問題)
+# ⚡ 高速多執行緒獲取技術指標 (徹底棄用 yf.download)
 # ==========================================
-def batch_append_tech_indicators(res_df):
-    if res_df.empty:
-        res_df['回檔%'] = pd.Series(dtype=float)
-        res_df['今日漲幅%'] = pd.Series(dtype=float)
-        return res_df
-
-    codes = [f"{str(c).strip()}.TW" for c in res_df['code']]
-    dd_map, chg_map = {}, {}
-    
+def get_single_stock_tech(c):
+    """獨立處理單檔股票，結構絕對穩定，不會互相干擾"""
+    tk = f"{str(c).strip()}.TW"
+    dd, chg = 0.0, 0.0
     try:
-        data = yf.download(codes, period="1mo", progress=False)
-        
-        for c in res_df['code']:
-            tk = f"{str(c).strip()}.TW"
-            dd, chg = 0.0, 0.0
-            closes, highs = None, None
-            
-            try:
-                # 【防呆核心】動態判斷回傳的是 DataFrame 還是 Series
-                if 'Close' in data:
-                    if isinstance(data['Close'], pd.DataFrame):
-                        if tk in data['Close'].columns:
-                            closes = data['Close'][tk].dropna()
-                            highs = data['High'][tk].dropna()
-                    elif isinstance(data['Close'], pd.Series):
-                        # 當 yfinance 自行降維成 Series 時的安全讀取
-                        closes = data['Close'].dropna()
-                        highs = data['High'].dropna()
-            except Exception:
-                pass
-                
-            if closes is not None and highs is not None and len(closes) >= 2:
-                # 確保變數型態是標準的 float，避免計算出錯
+        hist = yf.Ticker(tk).history(period="1mo")
+        if not hist.empty and 'Close' in hist.columns and 'High' in hist.columns:
+            closes = hist['Close'].dropna()
+            highs = hist['High'].dropna()
+            if len(closes) >= 2:
                 h_max = float(highs.max())
                 cur = float(closes.iloc[-1])
                 prev = float(closes.iloc[-2])
-                
                 if h_max > 0: dd = round(((h_max - cur) / h_max) * 100, 2)
                 if prev > 0: chg = round(((cur - prev) / prev) * 100, 2)
-            
-            dd_map[c] = float(dd)
-            chg_map[c] = float(chg)
-            
     except Exception:
-        for c in res_df['code']:
-            dd_map[c] = 0.0
-            chg_map[c] = 0.0
+        pass # 個別股票報錯直接回傳 0.0，不影響整體
+    return c, dd, chg
+
+def batch_append_tech_indicators(res_df):
+    if res_df.empty:
+        res_df['回檔%'] = 0.0
+        res_df['今日漲幅%'] = 0.0
+        return res_df
+
+    codes = res_df['code'].tolist()
+    dd_map, chg_map = {}, {}
+    
+    # 啟動 8 個執行緒同時向 Yahoo 要資料，兼顧速度與穩定度
+    with concurrent.futures.ThreadPoolExecutor(max_workers=8) as executor:
+        results = executor.map(get_single_stock_tech, codes)
+        
+    for c, dd, chg in results:
+        dd_map[c] = dd
+        chg_map[c] = chg
 
     res_df['回檔%'] = res_df['code'].map(dd_map).fillna(0.0)
     res_df['今日漲幅%'] = res_df['code'].map(chg_map).fillna(0.0)
