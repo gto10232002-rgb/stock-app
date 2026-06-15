@@ -24,7 +24,6 @@ st.caption("📌 關盤資訊會在每日 18:30 之後導入")
 # ==========================================
 @st.cache_data(ttl=3600)
 def get_stock_base_data_v3():
-    # 預先定義核心欄位，確保資料結構強健性，防止 KeyError
     cols = ['code', 'name', 'price', 'vol', 'trade_value', 'pe', 'industry', 'chip_ratio', 'value_billion']
     empty_df = pd.DataFrame(columns=cols)
 
@@ -83,7 +82,6 @@ def get_stock_base_data_v3():
         except Exception:
             continue
 
-    # 合併與計算
     df = pd.merge(df_price, df_chips, on='code', how='left') if not df_chips.empty else df_price.copy()
     for col in ['fi', 'it']:
         if col not in df.columns: df[col] = 0.0
@@ -113,7 +111,7 @@ def get_stock_base_data_v3():
     return df[cols]
 
 # ==========================================
-# ⚡ 批次獲取技術指標 (解決 yfinance 效能與報錯)
+# ⚡ 批次獲取技術指標 (完美解決 Series / DataFrame 結構突變問題)
 # ==========================================
 def batch_append_tech_indicators(res_df):
     if res_df.empty:
@@ -125,7 +123,6 @@ def batch_append_tech_indicators(res_df):
     dd_map, chg_map = {}, {}
     
     try:
-        # 一次性高速下載所有歷史數據
         data = yf.download(codes, period="1mo", progress=False)
         
         for c in res_df['code']:
@@ -133,25 +130,32 @@ def batch_append_tech_indicators(res_df):
             dd, chg = 0.0, 0.0
             closes, highs = None, None
             
-            # 處理單檔與多檔不同的 DataFrame 結構
-            if len(codes) > 1:
-                if 'Close' in data and tk in data['Close'].columns:
-                    closes = data['Close'][tk].dropna()
-                    highs = data['High'][tk].dropna()
-            else:
-                if 'Close' in data.columns:
-                    closes = data['Close'].dropna()
-                    highs = data['High'].dropna()
-                    
+            try:
+                # 【防呆核心】動態判斷回傳的是 DataFrame 還是 Series
+                if 'Close' in data:
+                    if isinstance(data['Close'], pd.DataFrame):
+                        if tk in data['Close'].columns:
+                            closes = data['Close'][tk].dropna()
+                            highs = data['High'][tk].dropna()
+                    elif isinstance(data['Close'], pd.Series):
+                        # 當 yfinance 自行降維成 Series 時的安全讀取
+                        closes = data['Close'].dropna()
+                        highs = data['High'].dropna()
+            except Exception:
+                pass
+                
             if closes is not None and highs is not None and len(closes) >= 2:
-                h_max = highs.max()
-                cur = closes.iloc[-1]
-                prev = closes.iloc[-2]
+                # 確保變數型態是標準的 float，避免計算出錯
+                h_max = float(highs.max())
+                cur = float(closes.iloc[-1])
+                prev = float(closes.iloc[-2])
+                
                 if h_max > 0: dd = round(((h_max - cur) / h_max) * 100, 2)
                 if prev > 0: chg = round(((cur - prev) / prev) * 100, 2)
             
             dd_map[c] = float(dd)
             chg_map[c] = float(chg)
+            
     except Exception:
         for c in res_df['code']:
             dd_map[c] = 0.0
@@ -171,7 +175,6 @@ try:
     if df.empty:
         st.warning("📅 暫時無法從證交所取得完整即時資料。請確認網路連線或是否為非交易時間。")
     else:
-        # 側邊欄設定
         st.sidebar.header("🎯 基礎篩選條件")
         min_p = st.sidebar.number_input("最低股價", value=0.0)
         max_p = st.sidebar.number_input("最高股價", value=500.0)
@@ -184,7 +187,6 @@ try:
         enable_drawdown = st.sidebar.checkbox("開啟「回檔策略」", value=False)
         enable_strong = st.sidebar.checkbox("開啟「近期強勢群組」", value=False)
         
-        # 恢復：您原本設定的策略變數
         dynamic_threshold = False
         support_mode = "全部符合"
         min_dd = 0
@@ -202,14 +204,12 @@ try:
             st.sidebar.caption("🛠️ 近期強勢群組細項設定")
             min_change = st.sidebar.slider("└ 最低今日漲幅(%)", -10, 10, 5)
         
-        # 執行基礎過濾
         res = df[(df['price'] >= min_p) & (df['price'] <= max_p) & (df['vol'] >= min_v)].copy()
         if max_pe > 0:
             res = res[((res['pe'] > 0) & (res['pe'] <= max_pe)).fillna(False)]
         if target_industry != "全部":
             res = res[res['industry'] == target_industry]
             
-        # 批次取得技術指標
         if not res.empty:
             with st.spinner(f"正在分析 {len(res)} 檔股票的即時技術指標..."):
                 res = batch_append_tech_indicators(res)
@@ -217,7 +217,6 @@ try:
             res['回檔%'] = pd.Series(dtype=float)
             res['今日漲幅%'] = pd.Series(dtype=float)
 
-        # 恢復：您原本的策略過濾邏輯
         if not res.empty:
             mask_drawdown = pd.Series(False, index=res.index)
             mask_strong = pd.Series(False, index=res.index)
@@ -246,7 +245,6 @@ try:
             elif enable_strong:
                 res = res[mask_strong]
 
-        # 計算支撐力道與排序
         res['支撐力道'] = "🔹 觀察中"
         if not res.empty:
             res.loc[res['chip_ratio'] >= 10.0, '支撐力道'] = "🔥 極強支撐"
@@ -259,7 +257,6 @@ try:
 
         res['K線連結'] = res['code'].apply(lambda x: f"https://tw.stock.yahoo.com/quote/{x}")
         
-        # 恢復：您完整的 ETF 成分股對照資料庫
         etf_db = {
             "2330": ["0050", "00919", "00929"], "2317": ["0050", "00919", "00929"], 
             "2454": ["0050", "0056", "00878", "00919", "00929", "00940"], "2308": ["0050", "00929"], 
@@ -313,7 +310,6 @@ try:
             'chip_ratio': '集中度%', 'pe': '本益比', 'value_billion': '成交額(億)'
         })
         
-        # 恢復：同產業族群的提示面板
         active_strategies = []
         if enable_drawdown: active_strategies.append("回檔策略")
         if enable_strong: active_strategies.append("近期強勢群組")
@@ -346,7 +342,6 @@ try:
 
         st.info(info_markdown)
         
-        # 顯示資料表格
         st.dataframe(
             current_df[['代號', '名稱', '產業', '今日漲幅%', '股價', '回檔%', '集中度%', '支撐力道', '成交額(億)', '本益比', 'K線連結']],
             column_config={
