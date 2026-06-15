@@ -116,6 +116,7 @@ def get_stock_base_data_v3():
     if not chip_success:
         st.sidebar.warning("⚠️ 無法取得近 7 日籌碼資料，請注意是否為非交易日盤後或 API 塞車。")
 
+    # 如果沒撈到基礎資料或籌碼，直接安全回傳空表格
     if df_price.empty or df_chips.empty:
         return pd.DataFrame()
         
@@ -148,15 +149,16 @@ def get_stock_base_data_v3():
     df['industry'] = df['industry'].replace(['', 'nan', 'None'], '其他')
     
     # --------------------------------------------------
-    # 🛠️ 在合併後的最終 df 內進行集中度計算、防呆除以 0、與 clip(100.0)
+    # 🛠️ 安全計算區：確認 'fi' 欄位存在，才執行防呆與 clip(100.0)
     # --------------------------------------------------
     df['chip_ratio'] = 0.0
-    mask_vol_not_zero = df['vol'] > 0
-    if mask_vol_not_zero.any():
-        df.loc[mask_vol_not_zero, 'chip_ratio'] = (
-            ((df.loc[mask_vol_not_zero, 'fi'] + df.loc[mask_vol_not_zero, 'it']) / df.loc[mask_vol_not_zero, 'vol'] * 100)
-        ).round(2)
-    df['chip_ratio'] = df['chip_ratio'].clip(upper=100.0)
+    if 'fi' in df.columns and 'it' in df.columns:
+        mask_vol_not_zero = df['vol'] > 0
+        if mask_vol_not_zero.any():
+            df.loc[mask_vol_not_zero, 'chip_ratio'] = (
+                ((df.loc[mask_vol_not_zero, 'fi'] + df.loc[mask_vol_not_zero, 'it']) / df.loc[mask_vol_not_zero, 'vol'] * 100)
+            ).round(2)
+        df['chip_ratio'] = df['chip_ratio'].clip(upper=100.0)
     
     df['value_billion'] = (df['trade_value'] / 100000000).round(2)
     return df
