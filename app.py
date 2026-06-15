@@ -147,7 +147,9 @@ def get_stock_base_data_v3():
     df['industry'] = df['industry'].astype(str).str.strip().map(ind_map).fillna(df['industry'])
     df['industry'] = df['industry'].replace(['', 'nan', 'None'], '其他')
     
-    # 計算集中度並進行上限截斷防呆
+    # --------------------------------------------------
+    # 🛠️ 在合併後的最終 df 內進行集中度計算、防呆除以 0、與 clip(100.0)
+    # --------------------------------------------------
     df['chip_ratio'] = 0.0
     mask_vol_not_zero = df['vol'] > 0
     if mask_vol_not_zero.any():
@@ -391,7 +393,7 @@ try:
 
         st.info(info_markdown)
         
-        # 核心修正點：將名稱欄位寬度改為安全穩定的字串型態 "medium"（約 150px），維持同時啟用 pinned=True 凍結功能不閃退
+        # 顯示資料表格
         st.dataframe(
             current_df[['代號', '名稱', '產業', '今日漲幅%', '股價', '回檔%', '集中度%', '支撐力道', '成交額(億)', '本益比', 'K線連結']],
             column_config={
