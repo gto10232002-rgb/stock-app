@@ -2,7 +2,6 @@ import streamlit as st
 import pandas as pd
 import requests
 import datetime
-import time
 import yfinance as yf
 
 # ==========================================
@@ -12,14 +11,8 @@ st.set_page_config(page_title="StockTool", layout="wide")
 
 st.markdown("""
 <style>
-    .block-container {
-        padding-top: 2.8rem !important; 
-        padding-bottom: 0rem !important;
-    }
-    h3 {
-        margin-top: 0rem !important;
-        margin-bottom: 0.4rem !important;
-    }
+    .block-container { padding-top: 2.8rem !important; padding-bottom: 0rem !important; }
+    h3 { margin-top: 0rem !important; margin-bottom: 0.4rem !important; }
 </style>
 """, unsafe_allow_html=True)
 
@@ -27,166 +20,146 @@ st.markdown("### 📊 台股多元策略選股系統")
 st.caption("📌 關盤資訊會在每日 18:30 之後導入")
 
 # ==========================================
-# 2. 獲取台股基礎資料
+# 2. 獲取台股基礎資料 (證交所 Open API)
 # ==========================================
 @st.cache_data(ttl=3600)
 def get_stock_base_data_v3():
+    # 預先定義核心欄位，確保資料結構強健性，防止 KeyError
+    cols = ['code', 'name', 'price', 'vol', 'trade_value', 'pe', 'industry', 'chip_ratio', 'value_billion']
+    empty_df = pd.DataFrame(columns=cols)
+
     df_price = pd.DataFrame()
     try:
-        url_price = "https://openapi.twse.com.tw/v1/exchangeReport/STOCK_DAY_ALL"
-        res_price = requests.get(url_price, timeout=20)
-        if res_price.status_code == 200:
-            data_json = res_price.json()
-            if isinstance(data_json, list) and len(data_json) > 0:
-                raw_price = pd.DataFrame(data_json)
-                if all(col in raw_price.columns for col in ['Code', 'ClosingPrice', 'TradeVolume', 'TradeValue', 'Name']):
-                    df_price = raw_price[raw_price['Code'].str.len() == 4].copy()
-                    df_price['price'] = pd.to_numeric(df_price['ClosingPrice'].str.replace(',', ''), errors='coerce')
-                    df_price['vol'] = pd.to_numeric(df_price['TradeVolume'].str.replace(',', ''), errors='coerce') / 1000
-                    df_price['trade_value'] = pd.to_numeric(df_price['TradeValue'].str.replace(',', ''), errors='coerce')
-                    df_price = df_price[['Code', 'Name', 'price', 'vol', 'trade_value']].rename(columns={'Code': 'code', 'Name': 'name'})
-        else:
-            st.sidebar.error(f"❌ 每日股價路徑失敗: 證交所回傳狀態碼 {res_price.status_code}")
+        res_p = requests.get("https://openapi.twse.com.tw/v1/exchangeReport/STOCK_DAY_ALL", timeout=15)
+        if res_p.status_code == 200 and res_p.json():
+            raw = pd.DataFrame(res_p.json())
+            df_price = raw[raw['Code'].str.len() == 4].copy()
+            df_price['price'] = pd.to_numeric(df_price['ClosingPrice'].str.replace(',', ''), errors='coerce')
+            df_price['vol'] = pd.to_numeric(df_price['TradeVolume'].str.replace(',', ''), errors='coerce') / 1000
+            df_price['trade_value'] = pd.to_numeric(df_price['TradeValue'].str.replace(',', ''), errors='coerce')
+            df_price = df_price[['Code', 'Name', 'price', 'vol', 'trade_value']].rename(columns={'Code': 'code', 'Name': 'name'})
     except Exception as e:
-        st.sidebar.error(f"❌ 每日股價路徑異常: {e}")
+        st.sidebar.error(f"⚠️ 股價API異常: {e}")
+
+    if df_price.empty:
+        return empty_df
 
     df_pe = pd.DataFrame()
     try:
-        url_pe = "https://openapi.twse.com.tw/v1/exchangeReport/BWIBBU_ALL"
-        res_pe = requests.get(url_pe, timeout=20)
-        if res_pe.status_code == 200:
-            data_json = res_pe.json()
-            if isinstance(data_json, list) and len(data_json) > 0:
-                raw_pe = pd.DataFrame(data_json)
-                if 'Code' in raw_pe.columns and 'PEratio' in raw_pe.columns:
-                    df_pe = raw_pe[['Code', 'PEratio']].rename(columns={'Code': 'code', 'PEratio': 'pe'})
-                    df_pe['pe'] = pd.to_numeric(df_pe['pe'].str.replace(',', ''), errors='coerce')
+        res_pe = requests.get("https://openapi.twse.com.tw/v1/exchangeReport/BWIBBU_ALL", timeout=15)
+        if res_pe.status_code == 200 and res_pe.json():
+            raw_pe = pd.DataFrame(res_pe.json())
+            df_pe = raw_pe[['Code', 'PEratio']].rename(columns={'Code': 'code', 'PEratio': 'pe'})
+            df_pe['pe'] = pd.to_numeric(df_pe['pe'].str.replace(',', ''), errors='coerce')
     except Exception:
         pass
 
     df_ind = pd.DataFrame()
     try:
-        url_industry = "https://openapi.twse.com.tw/v1/opendata/t187ap03_L"
-        res_ind = requests.get(url_industry, timeout=20)
-        if res_ind.status_code == 200:
-            data_json = res_ind.json()
-            if isinstance(data_json, list) and len(data_json) > 0:
-                raw_ind = pd.DataFrame(data_json)
-                if '公司代號' in raw_ind.columns and '產業別' in raw_ind.columns:
-                    df_ind = raw_ind[['公司代號', '產業別']].rename(columns={'公司代號': 'code', '產業別': 'industry'})
+        res_ind = requests.get("https://openapi.twse.com.tw/v1/opendata/t187ap03_L", timeout=15)
+        if res_ind.status_code == 200 and res_ind.json():
+            raw_ind = pd.DataFrame(res_ind.json())
+            df_ind = raw_ind[['公司代號', '產業別']].rename(columns={'公司代號': 'code', '產業別': 'industry'})
     except Exception:
         pass
 
     df_chips = pd.DataFrame()
-    headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'}
-    chip_success = False
-    
+    headers = {'User-Agent': 'Mozilla/5.0'}
     for i in range(7):
-        date_str = (datetime.datetime.now() - datetime.timedelta(days=i)).strftime("%Y%m%d")
-        url = f"https://www.twse.com.tw/rwd/zh/fund/T86?date={date_str}&selectType=ALLBUT0999&response=json"
+        d_str = (datetime.datetime.now() - datetime.timedelta(days=i)).strftime("%Y%m%d")
+        url = f"https://www.twse.com.tw/rwd/zh/fund/T86?date={d_str}&selectType=ALLBUT0999&response=json"
         try:
-            res = requests.get(url, headers=headers, timeout=20)
-            if res.status_code == 200:
-                res_json = res.json()
-                if "data" in res_json and "fields" in res_json:
-                    data = res_json["data"]
-                    fields = res_json["fields"]
-                    if data and fields:
-                        df_raw = pd.DataFrame(data, columns=fields)
-                        df_raw.columns = df_raw.columns.str.strip()
-                        
-                        fi_cols = [c for c in df_raw.columns if '外資' in c and '買賣超' in c]
-                        it_cols = [c for c in df_raw.columns if '投信' in c and '買賣超' in c]
-                        
-                        if fi_cols and it_cols and '證券代號' in df_raw.columns:
-                            fi_col = fi_cols[0]
-                            it_col = it_cols[0]
-                            df_chips = pd.DataFrame()
-                            df_chips['code'] = df_raw['證券代號'].astype(str).str.strip()
-                            df_chips['fi'] = pd.to_numeric(df_raw[fi_col].str.replace(',', ''), errors='coerce') / 1000
-                            df_chips['it'] = pd.to_numeric(df_raw[it_col].str.replace(',', ''), errors='coerce') / 1000
-                            chip_success = True
-                            break
-            elif res.status_code == 403:
-                st.sidebar.error("❌ 籌碼路徑 (T86) 遭證交所阻擋 (403 Forbidden)")
+            res = requests.get(url, headers=headers, timeout=10)
+            if res.status_code == 200 and "data" in res.json():
+                js = res.json()
+                df_raw = pd.DataFrame(js["data"], columns=[c.strip() for c in js["fields"]])
+                fi_c = [c for c in df_raw.columns if '外資' in c and '買賣超' in c][0]
+                it_c = [c for c in df_raw.columns if '投信' in c and '買賣超' in c][0]
+                
+                df_chips['code'] = df_raw['證券代號'].astype(str).str.strip()
+                df_chips['fi'] = pd.to_numeric(df_raw[fi_c].str.replace(',', ''), errors='coerce') / 1000
+                df_chips['it'] = pd.to_numeric(df_raw[it_c].str.replace(',', ''), errors='coerce') / 1000
                 break
         except Exception:
-            pass
+            continue
 
-    if not chip_success:
-        st.sidebar.warning("⚠️ 無法取得近 7 日籌碼資料，請注意是否為非交易日盤後或 API 塞車。")
+    # 合併與計算
+    df = pd.merge(df_price, df_chips, on='code', how='left') if not df_chips.empty else df_price.copy()
+    for col in ['fi', 'it']:
+        if col not in df.columns: df[col] = 0.0
+    df['fi'] = df['fi'].fillna(0.0)
+    df['it'] = df['it'].fillna(0.0)
 
-    # 如果沒撈到基礎資料或籌碼，直接安全回傳空表格
-    if df_price.empty or df_chips.empty:
-        return pd.DataFrame()
-        
-    df = pd.merge(df_price, df_chips, on='code', how='inner')
-    
-    if not df_pe.empty:
-        df = pd.merge(df, df_pe, on='code', how='left')
-    else:
-        df['pe'] = pd.NA
-        
-    if not df_ind.empty:
-        df = pd.merge(df, df_ind, on='code', how='left')
-    else:
-        df['industry'] = '其他'
-        
-    df['industry'] = df['industry'].fillna('其他')
+    df = pd.merge(df, df_pe, on='code', how='left') if not df_pe.empty else df.assign(pe=pd.NA)
+    df = pd.merge(df, df_ind, on='code', how='left') if not df_ind.empty else df.assign(industry='其他')
     
     ind_map = {
-        "01": "水泥工業", "02": "食品工業", "03": "塑膠工業", "04": "紡織纖維",
-        "05": "電機機械", "06": "電器電纜", "07": "化學工業", "08": "生技醫療業",
-        "09": "玻璃陶瓷", "10": "造紙工業", "11": "鋼鐵工業", "12": "橡膠工業",
-        "13": "汽車工業", "14": "建材營建", "15": "航運業", "16": "觀光餐旅",
-        "17": "金融保險", "18": "貿易百貨", "19": "綜合業", "20": "其他業",
-        "21": "化學工業", "22": "生技醫療業", "23": "油電燃氣業", "24": "半導體業", 
-        "25": "電腦及週邊設備業", "26": "光電業", "27": "通信網路業", "28": "電子零組件業", 
-        "29": "電子通路業", "30": "資訊服務業", "31": "其他電子業", "35": "綠能環保", 
-        "36": "數位雲端", "37": "運動休閒", "38": "居家生活", "91": "存託憑證"
+        "01": "水泥工業", "02": "食品工業", "03": "塑膠工業", "04": "紡織纖維", "05": "電機機械",
+        "06": "電器電纜", "07": "化學工業", "08": "生技醫療業", "09": "玻璃陶瓷", "10": "造紙工業",
+        "11": "鋼鐵工業", "12": "橡膠工業", "13": "汽車工業", "14": "建材營建", "15": "航運業",
+        "16": "觀光餐旅", "17": "金融保險", "18": "貿易百貨", "19": "綜合業", "20": "其他業",
+        "24": "半導體業", "25": "電腦及週邊設備業", "26": "光電業", "27": "通信網路業", 
+        "28": "電子零組件業", "29": "電子通路業", "30": "資訊服務業", "31": "其他電子業"
     }
     df['industry'] = df['industry'].astype(str).str.strip().map(ind_map).fillna(df['industry'])
-    df['industry'] = df['industry'].replace(['', 'nan', 'None'], '其他')
-    
-    # --------------------------------------------------
-    # 🛠️ 安全計算區：確認 'fi' 欄位存在，才執行防呆與 clip(100.0)
-    # --------------------------------------------------
+    df['industry'] = df['industry'].replace(['', 'nan', 'None', 'NaN'], '其他').fillna('其他')
+
     df['chip_ratio'] = 0.0
-    if 'fi' in df.columns and 'it' in df.columns:
-        mask_vol_not_zero = df['vol'] > 0
-        if mask_vol_not_zero.any():
-            df.loc[mask_vol_not_zero, 'chip_ratio'] = (
-                ((df.loc[mask_vol_not_zero, 'fi'] + df.loc[mask_vol_not_zero, 'it']) / df.loc[mask_vol_not_zero, 'vol'] * 100)
-            ).round(2)
-        df['chip_ratio'] = df['chip_ratio'].clip(upper=100.0)
-    
-    df['value_billion'] = (df['trade_value'] / 100000000).round(2)
-    return df
+    v_mask = df['vol'] > 0
+    df.loc[v_mask, 'chip_ratio'] = (((df.loc[v_mask, 'fi'] + df.loc[v_mask, 'it']) / df.loc[v_mask, 'vol']) * 100).round(2)
+    df['chip_ratio'] = df['chip_ratio'].clip(upper=100.0).fillna(0.0)
+    df['value_billion'] = (df['trade_value'] / 100000000).round(2).fillna(0.0)
+
+    return df[cols]
 
 # ==========================================
-# ⚡ 技術指標獨立快取
+# ⚡ 批次獲取技術指標 (解決 yfinance 效能與報錯)
 # ==========================================
-@st.cache_data(ttl=600)  
-def get_single_stock_tech(code):
-    tk = f"{str(code).strip()}.TW"
-    dd, chg = 0.0, 0.0
+def batch_append_tech_indicators(res_df):
+    if res_df.empty:
+        res_df['回檔%'] = pd.Series(dtype=float)
+        res_df['今日漲幅%'] = pd.Series(dtype=float)
+        return res_df
+
+    codes = [f"{str(c).strip()}.TW" for c in res_df['code']]
+    dd_map, chg_map = {}, {}
+    
     try:
-        stock = yf.Ticker(tk)
-        hist = stock.history(period="1mo")
-        if not hist.empty and len(hist) >= 2:
-            closes = hist['Close'].dropna()
-            highs = hist['High'].dropna()
-            if len(closes) >= 2:
-                high_1m = highs.max()
-                current = closes.iloc[-1]
-                prev_close = closes.iloc[-2]
-                if high_1m > 0:
-                    dd = round(((high_1m - current) / high_1m) * 100, 2)
-                if prev_close > 0:
-                    chg = round(((current - prev_close) / prev_close) * 100, 2)
+        # 一次性高速下載所有歷史數據
+        data = yf.download(codes, period="1mo", progress=False)
+        
+        for c in res_df['code']:
+            tk = f"{str(c).strip()}.TW"
+            dd, chg = 0.0, 0.0
+            closes, highs = None, None
+            
+            # 處理單檔與多檔不同的 DataFrame 結構
+            if len(codes) > 1:
+                if 'Close' in data and tk in data['Close'].columns:
+                    closes = data['Close'][tk].dropna()
+                    highs = data['High'][tk].dropna()
+            else:
+                if 'Close' in data.columns:
+                    closes = data['Close'].dropna()
+                    highs = data['High'].dropna()
+                    
+            if closes is not None and highs is not None and len(closes) >= 2:
+                h_max = highs.max()
+                cur = closes.iloc[-1]
+                prev = closes.iloc[-2]
+                if h_max > 0: dd = round(((h_max - cur) / h_max) * 100, 2)
+                if prev > 0: chg = round(((cur - prev) / prev) * 100, 2)
+            
+            dd_map[c] = float(dd)
+            chg_map[c] = float(chg)
     except Exception:
-        pass
-    return dd, chg
+        for c in res_df['code']:
+            dd_map[c] = 0.0
+            chg_map[c] = 0.0
+
+    res_df['回檔%'] = res_df['code'].map(dd_map).fillna(0.0)
+    res_df['今日漲幅%'] = res_df['code'].map(chg_map).fillna(0.0)
+    return res_df
 
 # ==========================================
 # 3. 主程式邏輯
@@ -196,7 +169,7 @@ try:
         df = get_stock_base_data_v3()
     
     if df.empty:
-        st.warning("📅 暫時無法從證交所取得完整即時資料。請查看側邊欄提示了解原因。")
+        st.warning("📅 暫時無法從證交所取得完整即時資料。請確認網路連線或是否為非交易時間。")
     else:
         # 側邊欄設定
         st.sidebar.header("🎯 基礎篩選條件")
@@ -205,12 +178,13 @@ try:
         min_v = st.sidebar.number_input("最低成交量(張)", value=1000)
         max_pe = st.sidebar.number_input("最高本益比 (0為不限)", value=30.0)
         
-        target_industry = st.sidebar.selectbox("篩選特定產業", ["全部"] + sorted(list(df['industry'].dropna().unique())))
+        target_industry = st.sidebar.selectbox("篩選特定產業", ["全部"] + sorted(list(df['industry'].unique())))
         
         st.sidebar.header("🧠 進階策略加選")
         enable_drawdown = st.sidebar.checkbox("開啟「回檔策略」", value=False)
         enable_strong = st.sidebar.checkbox("開啟「近期強勢群組」", value=False)
         
+        # 恢復：您原本設定的策略變數
         dynamic_threshold = False
         support_mode = "全部符合"
         min_dd = 0
@@ -232,38 +206,18 @@ try:
         res = df[(df['price'] >= min_p) & (df['price'] <= max_p) & (df['vol'] >= min_v)].copy()
         if max_pe > 0:
             res = res[((res['pe'] > 0) & (res['pe'] <= max_pe)).fillna(False)]
-            
         if target_industry != "全部":
-            res = res[(res['industry'] == target_industry).fillna(False)]
+            res = res[res['industry'] == target_industry]
             
-        res['回檔%'] = 0.0
-        res['今日漲幅%'] = 0.0
-        res['支撐力道'] = "🔹 觀察中"
-        res['K線連結'] = ""
-        
+        # 批次取得技術指標
         if not res.empty:
-            total_stocks = len(res['code'])
-            with st.spinner(f"正在分析 {total_stocks} 檔股票的即時技術指標..."):
-                drawdown_map = {}
-                change_map = {}
-                
-                if total_stocks > 0:
-                    progress_bar = st.progress(0)
-                    for index, code in enumerate(res['code']):
-                        dd, chg = get_single_stock_tech(code)
-                        drawdown_map[code] = dd
-                        change_map[code] = chg
-                        progress_bar.progress((index + 1) / total_stocks)
-                        time.sleep(0.01) 
-                    progress_bar.empty()
-                    
-                res['回檔%'] = res['code'].map(drawdown_map).fillna(0.0)
-                res['今日漲幅%'] = res['code'].map(change_map).fillna(0.0)
+            with st.spinner(f"正在分析 {len(res)} 檔股票的即時技術指標..."):
+                res = batch_append_tech_indicators(res)
         else:
             res['回檔%'] = pd.Series(dtype=float)
             res['今日漲幅%'] = pd.Series(dtype=float)
 
-        # 策略過濾邏輯
+        # 恢復：您原本的策略過濾邏輯
         if not res.empty:
             mask_drawdown = pd.Series(False, index=res.index)
             mask_strong = pd.Series(False, index=res.index)
@@ -293,14 +247,11 @@ try:
                 res = res[mask_strong]
 
         # 計算支撐力道與排序
-        def judge_support_strength(row):
-            if pd.isna(row['chip_ratio']): return "🔹 觀察中"
-            if row['chip_ratio'] >= 10.0: return "🔥 極強支撐"
-            elif row['chip_ratio'] >= 5.0: return "✅ 健康買盤"
-            else: return "🔹 觀察中"
-            
+        res['支撐力道'] = "🔹 觀察中"
         if not res.empty:
-            res['支撐力道'] = res.apply(judge_support_strength, axis=1)
+            res.loc[res['chip_ratio'] >= 10.0, '支撐力道'] = "🔥 極強支撐"
+            res.loc[(res['chip_ratio'] >= 5.0) & (res['chip_ratio'] < 10.0), '支撐力道'] = "✅ 健康買盤"
+            
             if enable_strong and not enable_drawdown:
                 res = res.sort_values(by='今日漲幅%', ascending=False)
             else:
@@ -308,7 +259,7 @@ try:
 
         res['K線連結'] = res['code'].apply(lambda x: f"https://tw.stock.yahoo.com/quote/{x}")
         
-        # ETF 成分股對照資料庫
+        # 恢復：您完整的 ETF 成分股對照資料庫
         etf_db = {
             "2330": ["0050", "00919", "00929"], "2317": ["0050", "00919", "00929"], 
             "2454": ["0050", "0056", "00878", "00919", "00929", "00940"], "2308": ["0050", "00929"], 
@@ -362,6 +313,7 @@ try:
             'chip_ratio': '集中度%', 'pe': '本益比', 'value_billion': '成交額(億)'
         })
         
+        # 恢復：同產業族群的提示面板
         active_strategies = []
         if enable_drawdown: active_strategies.append("回檔策略")
         if enable_strong: active_strategies.append("近期強勢群組")
@@ -386,12 +338,11 @@ try:
             else:
                 info_markdown = f"🎯 當前過濾組合：【{strategy_text}】\n\n**最終符合條件：{total_count} 檔**"
         else:
-            total_count = 0
             current_df = pd.DataFrame(columns=['代號', '名稱', '產業', '今日漲幅%', '股價', '回檔%', '集中度%', '支撐力道', '成交額(億)', '本益比', 'K線連結'])
             if is_advanced_strategy_active:
-                info_markdown = f"🎯 當前過濾組合：【{strategy_text}】\n\n**最終符合條件：{total_count} 檔**\n\n* （目前沒有3檔以上共同產業的主力出現）"
+                info_markdown = f"🎯 當前過濾組合：【{strategy_text}】\n\n**最終符合條件：0 檔**\n\n* （目前沒有3檔以上共同產業的主力出現）"
             else:
-                info_markdown = f"🎯 當前過濾組合：【{strategy_text}】\n\n**最終符合條件：{total_count} 檔**"
+                info_markdown = f"🎯 當前過濾組合：【{strategy_text}】\n\n**最終符合條件：0 檔**"
 
         st.info(info_markdown)
         
