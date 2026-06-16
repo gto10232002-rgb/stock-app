@@ -98,6 +98,7 @@ def get_stock_base_data_v3():
     df = pd.merge(df, df_pe, on='code', how='left') if not df_pe.empty else df.assign(pe=pd.NA)
     df = pd.merge(df, df_ind, on='code', how='left') if not df_ind.empty else df.assign(industry='其他')
     
+    # 確保產業代號格式正確，並映射為中文
     ind_map = {
         "01": "水泥工業", "02": "食品工業", "03": "塑膠工業", "04": "紡織纖維", "05": "電機機械",
         "06": "電器電纜", "07": "化學工業", "08": "生技醫療業", "09": "玻璃陶瓷", "10": "造紙工業",
@@ -106,40 +107,36 @@ def get_stock_base_data_v3():
         "24": "半導體業", "25": "電腦及週邊設備業", "26": "光電業", "27": "通信網路業", 
         "28": "電子零組件業", "29": "電子通路業", "30": "資訊服務業", "31": "其他電子業"
     }
-    df['industry'] = df['industry'].astype(str).str.strip().map(ind_map).fillna(df['industry'])
-    df['industry'] = df['industry'].replace(['', 'nan', 'None', 'NaN'], '其他').fillna('其他')
+    # 強制將 industry 轉為字串並補齊兩位數，再進行對應
+    df['industry'] = df['industry'].astype(str).str.strip().str.zfill(2)
+    df['industry'] = df['industry'].map(ind_map).fillna(df['industry'])
+    df['industry'] = df['industry'].replace(['', 'nan', 'None', 'NaN', '00'], '其他').fillna('其他')
 
     return df[cols]
 
 # ==========================================
-# ⚡ 高速多執行緒獲取技術指標 (修正抓取邏輯)
+# ⚡ 高速多執行緒獲取技術指標
 # ==========================================
 def get_single_stock_tech(c):
     tk = f"{str(c).strip()}.TW"
     dd, chg = 0.0, 0.0
     try:
-        # 放寬 timeout 並加入簡單的重試機制概念 (這裡依賴 yf 內部的機制)
-        ticker = yf.Ticker(tk)
-        hist = ticker.history(period="1mo", timeout=10)
-        
+        hist = yf.download(tk, period="1mo", progress=False, timeout=10)
         if not hist.empty and 'Close' in hist.columns and 'High' in hist.columns:
+            # 展平欄位名稱，避免 MultiIndex 問題
+            if isinstance(hist.columns, pd.MultiIndex):
+                hist.columns = [col[0] for col in hist.columns]
+                
             closes = hist['Close'].dropna()
             highs = hist['High'].dropna()
             if len(closes) >= 2:
                 h_max = float(highs.max())
                 cur = float(closes.iloc[-1])
                 prev = float(closes.iloc[-2])
-                
-                # 計算回檔 (從近一個月最高點跌了多少)
-                if h_max > 0 and cur > 0: 
-                    dd = round(((h_max - cur) / h_max) * 100, 2)
-                
-                # 計算今日漲跌幅
-                if prev > 0 and cur > 0: 
-                    chg = round(((cur - prev) / prev) * 100, 2)
+                if h_max > 0: dd = round(((h_max - cur) / h_max) * 100, 2)
+                if prev > 0: chg = round(((cur - prev) / prev) * 100, 2)
     except Exception as e:
-        # 這裡可以考慮 print(e) 來看是什麼原因，但為了畫面的整潔先略過
-        pass 
+        print(f"Error fetching {tk}: {e}") # 在伺服器日誌中記錄錯誤
     return c, dd, chg
 
 def batch_append_tech_indicators(res_df):
@@ -163,7 +160,7 @@ def batch_append_tech_indicators(res_df):
     return res_df
 
 # ==========================================
-# 3. 主程式邏輯 (核心策略與UI版面完全保留)
+# 3. 主程式邏輯
 # ==========================================
 try:
     with st.spinner("正在同步最新籌碼與產業數據..."):
@@ -178,6 +175,7 @@ try:
         min_v = st.sidebar.number_input("最低成交量(張)", value=1000)
         max_pe = st.sidebar.number_input("最高本益比 (0為不限)", value=30.0)
         
+        # 篩選特定產業的選單
         target_industry = st.sidebar.selectbox("篩選特定產業", ["全部"] + sorted(list(df['industry'].unique())))
         
         st.sidebar.header("🧠 進階策略加選")
@@ -339,21 +337,21 @@ try:
 
         st.info(info_markdown)
         
-        # --- 增強版 dataframe 顯示設定 (包含您要的固定與欄寬) ---
+        # --- 調整後的 dataframe 顯示設定 (確保凍結與寬度生效) ---
         st.dataframe(
             current_df[['代號', '名稱', '產業', '今日漲幅%', '股價', '回檔%', '集中度%', '支撐力道', '成交額(億)', '本益比', 'K線連結']],
             column_config={
-                "代號": st.column_config.TextColumn("代號", pinned=True, width="small"),  
-                "名稱": st.column_config.TextColumn("名稱", pinned=True, width="large"), # 改為 large 顯示完整 ETF 資訊
-                "產業": st.column_config.TextColumn("產業", width="medium"),
+                "代號": st.column_config.TextColumn("代號", pinned=True),  # 移除強制 width
+                "名稱": st.column_config.TextColumn("名稱", pinned=True),  # 移除強制 width
+                "產業": st.column_config.TextColumn("產業"),
                 "今日漲幅%": st.column_config.NumberColumn("今日漲幅%", format="%.2f %%"),
                 "股價": st.column_config.NumberColumn("股價", format="%.2f"),
                 "回檔%": st.column_config.NumberColumn("回檔%", format="%.2f %%"),
                 "集中度%": st.column_config.NumberColumn("集中度%", format="%.2f %%"),
-                "支撐力道": st.column_config.TextColumn("支撐力道", width="medium"),
+                "支撐力道": st.column_config.TextColumn("支撐力道"),
                 "成交額(億)": st.column_config.NumberColumn("成交額(億)", format="%.2f 億"),
                 "本益比": st.column_config.NumberColumn("本益比", format="%.2f"),
-                "K線連結": st.column_config.LinkColumn("K線", display_text="📈查看", width="small")
+                "K線連結": st.column_config.LinkColumn("K線", display_text="📈查看")
             },
             use_container_width=True,
             hide_index=True,
