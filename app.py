@@ -85,23 +85,17 @@ def get_stock_base_data_v3():
 
     df = pd.merge(df_price, df_chips, on='code', how='left') if not df_chips.empty else df_price.copy()
     
-    # --- 🛠️ 除錯修改區塊開始：安全運算，徹底避開 .loc 維度異常 ---
-    
-    # 1. 確保欄位存在且為數值型態，防呆處理
+    # --- 🛠️ 安全運算區塊：徹底避開 .loc 維度異常 ---
     df['fi'] = pd.to_numeric(df.get('fi', 0.0), errors='coerce').fillna(0.0)
     df['it'] = pd.to_numeric(df.get('it', 0.0), errors='coerce').fillna(0.0)
     df['vol'] = pd.to_numeric(df.get('vol', 0.0), errors='coerce').fillna(0.0)
     df['trade_value'] = pd.to_numeric(df.get('trade_value', 0.0), errors='coerce').fillna(0.0)
 
-    # 2. 取代 0 為 NA 以避免除以零報錯，全面使用向量化運算取代切片賦值
-    safe_vol = df['vol'].replace(0, pd.NA)
-    df['chip_ratio'] = (((df['fi'] + df['it']) / safe_vol) * 100).round(2)
-    
-    # 3. 限制最高 100%，並將 NA 乾淨補回 0.0
-    df['chip_ratio'] = df['chip_ratio'].clip(upper=100.0).fillna(0.0)
-    df['value_billion'] = (df['trade_value'] / 100000000).round(2).fillna(0.0)
-    
-    # --- 🛠️ 除錯修改區塊結束 ---
+    net_chips = df['fi'] + df['it']
+    df['chip_ratio'] = (net_chips / df['vol'].replace(0, pd.NA)).fillna(0.0) * 100
+    df['chip_ratio'] = df['chip_ratio'].clip(upper=100.0).round(2)
+    df['value_billion'] = (df['trade_value'] / 100000000).fillna(0.0).round(2)
+    # --- 🛠️ 運算區塊結束 ---
 
     df = pd.merge(df, df_pe, on='code', how='left') if not df_pe.empty else df.assign(pe=pd.NA)
     df = pd.merge(df, df_ind, on='code', how='left') if not df_ind.empty else df.assign(industry='其他')
@@ -126,7 +120,7 @@ def get_single_stock_tech(c):
     tk = f"{str(c).strip()}.TW"
     dd, chg = 0.0, 0.0
     try:
-        hist = yf.Ticker(tk).history(period="1mo")
+        hist = yf.Ticker(tk).history(period="1mo", timeout=5)
         if not hist.empty and 'Close' in hist.columns and 'High' in hist.columns:
             closes = hist['Close'].dropna()
             highs = hist['High'].dropna()
@@ -161,7 +155,7 @@ def batch_append_tech_indicators(res_df):
     return res_df
 
 # ==========================================
-# 3. 主程式邏輯
+# 3. 主程式邏輯 (核心策略與UI版面完全保留)
 # ==========================================
 try:
     with st.spinner("正在同步最新籌碼與產業數據..."):
