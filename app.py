@@ -23,9 +23,9 @@ st.caption("📌 關盤資訊會在每日 18:30 之後導入")
 # ==========================================
 # 2. 獲取台股基礎資料 (證交所 Open API)
 # ==========================================
-# 🌟 升級至 v5 版本函數，徹底刷新快取，防範 91 等歷史舊資料殘留
+# 🌟 升級至 v6 版本函數，徹底刷新快取，確保 91 開頭股票完全被抹除
 @st.cache_data(ttl=3600)
-def get_stock_base_data_v5():
+def get_stock_base_data_v6():
     cols = ['code', 'name', 'price', 'vol', 'trade_value', 'pe', 'industry', 'chip_ratio', 'value_billion']
     empty_df = pd.DataFrame(columns=cols)
 
@@ -39,6 +39,9 @@ def get_stock_base_data_v5():
             df_price['vol'] = pd.to_numeric(df_price['TradeVolume'].str.replace(',', ''), errors='coerce') / 1000
             df_price['trade_value'] = pd.to_numeric(df_price['TradeValue'].str.replace(',', ''), errors='coerce')
             df_price = df_price[['Code', 'Name', 'price', 'vol', 'trade_value']].rename(columns={'Code': 'code', 'Name': 'name'})
+            
+            # 🌟【核心修正】直接從源頭無條件全面封殺所有 91 開頭的存託憑證(TDR)，使其徹底消失
+            df_price = df_price[~df_price['code'].str.startswith('91')]
     except Exception as e:
         st.sidebar.error(f"⚠️ 股價API異常: {e}")
 
@@ -124,13 +127,13 @@ def get_stock_base_data_v5():
     df['industry'] = df['industry'].apply(to_clean_code)
     df['industry'] = df['industry'].map(ind_map).fillna(df['industry'])
     
-    # 🌟 終極防線：確保完全消滅代碼 91 或其餘數字。只要名稱中「不包含任何中文」，一律直接變為「其他」
+    # 🌟 確保完全消滅代碼殘留。只要名稱中「不包含任何中文」，一律強制變為「其他」
     def force_remove_numeric_code(x):
         s = str(x).strip()
         if not s or s.lower() in ['nan', 'none']:
             return '其他'
-        # 檢查字串中是否完全沒有中文字元，若是，則判定為未轉換完全的數字或英文代號
         if not any('\u4e00' <= char <= '\u9fff' for char in s):
+            return ' Protestants 其他'
             return '其他'
         return s
         
@@ -187,35 +190,36 @@ def batch_append_tech_indicators(res_df):
 # ==========================================
 try:
     with st.spinner("正在同步最新籌碼與產業數據..."):
-        df = get_stock_base_data_v5()
+        df = get_stock_base_data_v6()
     
     if df.empty:
         st.warning("📅 暫時無法從證交所取得完整即時資料。請確認網路連線或是否為非交易時間。")
     else:
-        # 🌟 核心修正：側邊欄內完全封印手動打字，全部改為單純的下拉式選單 st.selectbox
+        # 🌟【核心修正】全面移除 st.selectbox。改用點選式控制鈕，100% 杜絕打字與彈出鍵盤
         with st.sidebar.form(key="filter_form"):
             st.header("🎯 基礎篩選條件")
             
-            # 移除 st.number_input，全面改用精準選單
-            min_p = st.selectbox("最低股價", options=[0.0, 10.0, 20.0, 30.0, 50.0, 100.0, 200.0, 300.0, 500.0], index=0)
-            max_p = st.selectbox("最高股價", options=[50.0, 100.0, 150.0, 200.0, 300.0, 400.0, 500.0, 1000.0, 2000.0, 9999.0], index=6)
-            min_v = st.selectbox("最低成交量(張)", options=[0, 100, 500, 1000, 2000, 3000, 5000, 10000], index=3)
-            max_pe = st.selectbox("最高本益比", options=[0.0, 10.0, 15.0, 20.0, 25.0, 30.0, 40.0, 50.0, 100.0], index=5, format_func=lambda x: "不限" if x == 0.0 else f"{x}")
+            # 1. 數字範圍全部改為 st.select_slider (純滑動點選，無任何輸入框)
+            min_p = st.select_slider("最低股價", options=[0.0, 10.0, 20.0, 30.0, 50.0, 100.0, 200.0, 300.0, 500.0], value=0.0)
+            max_p = st.select_slider("最高股價", options=[50.0, 100.0, 150.0, 200.0, 300.0, 400.0, 500.0, 1000.0, 2000.0, 9999.0], value=500.0)
+            min_v = st.select_slider("最低成交量(張)", options=[0, 100, 500, 1000, 2000, 3000, 5000, 10000], value=1000)
+            max_pe = st.select_slider("最高本益比", options=[0.0, 10.0, 15.0, 20.0, 25.0, 30.0, 40.0, 50.0, 100.0], value=30.0, format_func=lambda x: "不限" if x == 0.0 else f"{x}")
             
-            target_industry = st.selectbox("篩選特定產業", ["全部"] + sorted(list(df['industry'].unique())))
+            # 2. 產業選項眾多，封裝入摺疊面板，並改用 st.radio（純按鈕點選，無搜尋欄位，絕不彈出鍵盤）
+            with st.expander("📂 點擊展開：篩選特定產業", expanded=False):
+                target_industry = st.radio("選擇產業", options=["全部"] + sorted(list(df['industry'].unique())), index=0)
             
             st.header("🧠 進階策略加選")
-            strategy_mode = st.selectbox("選擇進階策略模式", ["不加選", "開啟「回檔策略」", "開啟「近期強勢群組」"], index=0)
+            strategy_mode = st.radio("選擇進階策略模式", options=["不加選", "開啟「回檔策略」", "開啟「近期強勢群組」"], index=0)
             
             enable_drawdown = (strategy_mode == "開啟「回檔策略」")
             enable_strong = (strategy_mode == "開啟「近期強勢群組」")
             
-            support_mode = st.selectbox("└ 籌碼支撐型態 (僅回檔策略有效)", ["全部符合", "單日爆發強勢型", "波段洗刷接貨型"])
+            support_mode = st.radio("└ 籌碼支撐型態 (僅回檔策略有效)", options=["全部符合", "單日爆發強勢型", "波段洗刷接貨型"], index=0)
             dynamic_threshold = st.checkbox("└ 啟用股本規模動態門檻調整 (僅回檔策略有效)", value=True)
             
-            # 移除 st.slider 拖曳滑桿，全面改用 st.selectbox 下拉選單，杜絕跳轉干擾
-            min_dd = st.selectbox("└ 最低回檔幅度(%) (僅回檔策略有效)", options=[0, 3, 5, 8, 10, 15, 20, 25, 30, 40, 50], index=2)
-            min_change = st.selectbox("└ 最低今日漲幅(%) (僅近期強勢群組有效)", options=[-10, -5, -3, -1, 0, 1, 2, 3, 5, 7, 10], index=8)
+            min_dd = st.select_slider("└ 最低回檔幅度(%) (僅回檔策略有效)", options=[0, 3, 5, 8, 10, 15, 20, 25, 30, 40, 50], value=5)
+            min_change = st.select_slider("└ 最低今日漲幅(%) (僅近期強勢群組有效)", options=[-10, -5, -3, -1, 0, 1, 2, 3, 5, 7, 10], value=5)
             
             submit_button = st.form_submit_button(label="🚀 套用篩選條件")
         
