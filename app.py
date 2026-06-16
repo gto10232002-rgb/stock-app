@@ -20,17 +20,11 @@ st.markdown("""
 st.markdown("### 📊 台股多元策略選股系統")
 st.caption("📌 關盤資訊會在每日 18:30 之後導入")
 
-# 🛠️ 初始化 Session State 用於側邊欄策略互斥控制
-if 'drawdown' not in st.session_state:
-    st.session_state.drawdown = False
-if 'strong' not in st.session_state:
-    st.session_state.strong = False
-
 # ==========================================
 # 2. 獲取台股基礎資料 (證交所 Open API)
 # ==========================================
 @st.cache_data(ttl=3600)
-def get_stock_base_data_v3():
+def get_stock_base_data_v4():
     cols = ['code', 'name', 'price', 'vol', 'trade_value', 'pe', 'industry', 'chip_ratio', 'value_billion']
     empty_df = pd.DataFrame(columns=cols)
 
@@ -104,7 +98,7 @@ def get_stock_base_data_v3():
     df = pd.merge(df, df_pe, on='code', how='left') if not df_pe.empty else df.assign(pe=pd.NA)
     df = pd.merge(df, df_ind, on='code', how='left') if not df_ind.empty else df.assign(industry='其他')
     
-    # ─── 🛠️ 數據清洗與中文對應 ───
+    # ─── 🛠️ 數據清洗與中文對應字典擴充 ───
     ind_map = {
         "01": "水泥工業", "02": "食品工業", "03": "塑膠工業", "04": "紡織纖維", "05": "電機機械",
         "06": "電器電纜", "07": "化學工業", "08": "生技醫療業", "09": "玻璃陶瓷", "10": "造紙工業",
@@ -114,7 +108,8 @@ def get_stock_base_data_v3():
         "24": "半導體業", "25": "電腦及週邊設備業", "26": "光電業", "27": "通信網路業", 
         "28": "電子零組件業", "29": "電子通路業", "30": "資訊服務業", "31": "其他電子業",
         "32": "文化創意業", "33": "農業科技業", "34": "電子商務業", "35": "綠能環保業",
-        "36": "數位雲端業", "37": "運動休閒業", "38": "居家生活業"
+        "36": "數位雲端業", "37": "運動休閒業", "38": "居家生活業",
+        "80": "建材營建", "91": "存託憑證"
     }
     
     def to_clean_code(x):
@@ -125,10 +120,17 @@ def get_stock_base_data_v3():
             return s.zfill(2)
         return s
 
-    # 確保轉換完全
     df['industry'] = df['industry'].apply(to_clean_code)
     df['industry'] = df['industry'].map(ind_map).fillna(df['industry'])
-    df['industry'] = df['industry'].replace(['', 'nan', 'None', 'NaN', '00'], '其他').fillna('其他')
+    
+    # 🌟 終極防線：如果對應完仍是純數字代碼（例如沒定義到的殘留代號），一律強制消滅變成「其他」
+    def force_remove_numeric_code(x):
+        s = str(x).strip()
+        if s.isdigit() or s == '' or s.lower() in ['nan', 'none']:
+            return '其他'
+        return s
+        
+    df['industry'] = df['industry'].apply(force_remove_numeric_code)
 
     return df[cols]
 
@@ -181,49 +183,39 @@ def batch_append_tech_indicators(res_df):
 # ==========================================
 try:
     with st.spinner("正在同步最新籌碼與產業數據..."):
-        df = get_stock_base_data_v3()
+        df = get_stock_base_data_v4()
     
     if df.empty:
         st.warning("📅 暫時無法從證交所取得完整即時資料。請確認網路連線或是否為非交易時間。")
     else:
-        st.sidebar.header("🎯 基礎篩選條件")
-        min_p = st.sidebar.number_input("最低股價", value=0.0)
-        max_p = st.sidebar.number_input("最高股價", value=500.0)
-        min_v = st.sidebar.number_input("最低成交量(張)", value=1000)
-        max_pe = st.sidebar.number_input("最高本益比 (0為不限)", value=30.0)
-        
-        target_industry = st.sidebar.selectbox("篩選特定產業", ["全部"] + sorted(list(df['industry'].unique())))
-        
-        st.sidebar.header("🧠 進階策略加選")
-        
-        enable_drawdown = st.sidebar.checkbox(
-            "開啟「回檔策略」", 
-            key="drawdown", 
-            disabled=st.session_state.strong
-        )
-        enable_strong = st.sidebar.checkbox(
-            "開啟「近期強勢群組」", 
-            key="strong", 
-            disabled=st.session_state.drawdown
-        )
-        
-        dynamic_threshold = False
-        support_mode = "全部符合"
-        min_dd = 0
-        min_change = 0
-        
-        if enable_drawdown:
-            st.sidebar.markdown("---")
-            st.sidebar.caption("🛠️ 回檔策略細項設定")
-            support_mode = st.sidebar.selectbox("└ 籌碼支撐型態", ["全部符合", "單日爆發強勢型", "波段洗刷接貨型"])
-            dynamic_threshold = st.sidebar.checkbox("└ 啟用股本規模動態門檻調整", value=True)
-            min_dd = st.sidebar.slider("└ 最低回檔幅度(%)", 0, 50, 5)
+        # 🌟 核心修正：將側邊欄所有篩選條件包進 Form 表單中，避免頻繁亂跳
+        with st.sidebar.form(key="filter_form"):
+            st.header("🎯 基礎篩選條件")
+            min_p = st.number_input("最低股價", value=0.0)
+            max_p = st.number_input("最高股價", value=500.0)
+            min_v = st.number_input("最低成交量(張)", value=1000)
+            max_pe = st.number_input("最高本益比 (0為不限)", value=30.0)
             
-        if enable_strong:
-            st.sidebar.markdown("---")
-            st.sidebar.caption("🛠️ 近期強勢群組細項設定")
-            min_change = st.sidebar.slider("└ 最低今日漲幅(%)", -10, 10, 5)
+            target_industry = st.selectbox("篩選特定產業", ["全部"] + sorted(list(df['industry'].unique())))
+            
+            st.header("🧠 進階策略加選")
+            
+            # 使用下拉式選單替代原本可能會衝突的獨立勾選方塊
+            strategy_mode = st.selectbox("選擇進階策略模式", ["不加選", "開啟「回檔策略」", "開啟「近期強勢群組」"])
+            
+            enable_drawdown = (strategy_mode == "開啟「回檔策略」")
+            enable_strong = (strategy_mode == "開啟「近期強勢群組」")
+            
+            support_mode = st.selectbox("└ 籌碼支撐型態 (僅回檔策略有效)", ["全部符合", "單日爆發強勢型", "波段洗刷接貨型"])
+            dynamic_threshold = st.checkbox("└ 啟用股本規模動態門檻調整 (僅回檔策略有效)", value=True)
+            min_dd = st.slider("└ 最低回檔幅度(%) (僅回檔策略有效)", 0, 50, 5)
+            
+            min_change = st.slider("└ 最低今日漲幅(%) (僅近期強勢群組有效)", -10, 10, 5)
+            
+            # 🌟 表單提交按鈕，按下去才會整頁重算
+            submit_button = st.form_submit_button(label="🚀 套用篩選條件")
         
+        # 開始資料過濾流程
         res = df[(df['price'] >= min_p) & (df['price'] <= max_p) & (df['vol'] >= min_v)].copy()
         if max_pe > 0:
             res = res[((res['pe'] > 0) & (res['pe'] <= max_pe)).fillna(False)]
@@ -268,6 +260,7 @@ try:
 
         res['K線連結'] = res['code'].apply(lambda x: f"https://tw.stock.yahoo.com/quote/{x}")
         
+        # ETF 資料庫
         etf_db = {
             "2330": ["0050", "00919", "00929"], "2317": ["0050", "00919", "00929"], 
             "2454": ["0050", "0056", "00878", "00919", "00929", "00940"], "2308": ["0050", "00929"], 
@@ -316,7 +309,6 @@ try:
         if not res.empty:
             res['name'] = res.apply(merge_etf_info, axis=1)
 
-        # ─── 🛠️ 核心修正：確保在 info 統計前，欄位完全對應 ───
         display_df = res.rename(columns={
             'code': '代號', 'name': '名稱', 'industry': '產業', 'price': '股價', 
             'chip_ratio': '集中度%', 'pe': '本益比', 'value_billion': '成交額(億)'
@@ -337,7 +329,6 @@ try:
             current_df = display_df
             
             if is_advanced_strategy_active:
-                # 這裡抓到的 display_df['產業'] 現在 100% 已經是中文名稱了
                 ind_counts = display_df['產業'].value_counts()
                 filtered_ind = [f"{ind}: {count} 檔" for ind, count in ind_counts.items() if count >= 3]
                 
