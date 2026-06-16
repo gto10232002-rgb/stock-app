@@ -85,7 +85,6 @@ def get_stock_base_data_v3():
 
     df = pd.merge(df_price, df_chips, on='code', how='left') if not df_chips.empty else df_price.copy()
     
-    # --- 🛠️ 安全運算區塊：徹底避開 .loc 維度異常 ---
     df['fi'] = pd.to_numeric(df.get('fi', 0.0), errors='coerce').fillna(0.0)
     df['it'] = pd.to_numeric(df.get('it', 0.0), errors='coerce').fillna(0.0)
     df['vol'] = pd.to_numeric(df.get('vol', 0.0), errors='coerce').fillna(0.0)
@@ -95,7 +94,6 @@ def get_stock_base_data_v3():
     df['chip_ratio'] = (net_chips / df['vol'].replace(0, pd.NA)).fillna(0.0) * 100
     df['chip_ratio'] = df['chip_ratio'].clip(upper=100.0).round(2)
     df['value_billion'] = (df['trade_value'] / 100000000).fillna(0.0).round(2)
-    # --- 🛠️ 運算區塊結束 ---
 
     df = pd.merge(df, df_pe, on='code', how='left') if not df_pe.empty else df.assign(pe=pd.NA)
     df = pd.merge(df, df_ind, on='code', how='left') if not df_ind.empty else df.assign(industry='其他')
@@ -114,13 +112,16 @@ def get_stock_base_data_v3():
     return df[cols]
 
 # ==========================================
-# ⚡ 高速多執行緒獲取技術指標
+# ⚡ 高速多執行緒獲取技術指標 (修正抓取邏輯)
 # ==========================================
 def get_single_stock_tech(c):
     tk = f"{str(c).strip()}.TW"
     dd, chg = 0.0, 0.0
     try:
-        hist = yf.Ticker(tk).history(period="1mo", timeout=5)
+        # 放寬 timeout 並加入簡單的重試機制概念 (這裡依賴 yf 內部的機制)
+        ticker = yf.Ticker(tk)
+        hist = ticker.history(period="1mo", timeout=10)
+        
         if not hist.empty and 'Close' in hist.columns and 'High' in hist.columns:
             closes = hist['Close'].dropna()
             highs = hist['High'].dropna()
@@ -128,9 +129,16 @@ def get_single_stock_tech(c):
                 h_max = float(highs.max())
                 cur = float(closes.iloc[-1])
                 prev = float(closes.iloc[-2])
-                if h_max > 0: dd = round(((h_max - cur) / h_max) * 100, 2)
-                if prev > 0: chg = round(((cur - prev) / prev) * 100, 2)
-    except Exception:
+                
+                # 計算回檔 (從近一個月最高點跌了多少)
+                if h_max > 0 and cur > 0: 
+                    dd = round(((h_max - cur) / h_max) * 100, 2)
+                
+                # 計算今日漲跌幅
+                if prev > 0 and cur > 0: 
+                    chg = round(((cur - prev) / prev) * 100, 2)
+    except Exception as e:
+        # 這裡可以考慮 print(e) 來看是什麼原因，但為了畫面的整潔先略過
         pass 
     return c, dd, chg
 
@@ -331,18 +339,21 @@ try:
 
         st.info(info_markdown)
         
+        # --- 增強版 dataframe 顯示設定 (包含您要的固定與欄寬) ---
         st.dataframe(
             current_df[['代號', '名稱', '產業', '今日漲幅%', '股價', '回檔%', '集中度%', '支撐力道', '成交額(億)', '本益比', 'K線連結']],
             column_config={
                 "代號": st.column_config.TextColumn("代號", pinned=True, width="small"),  
-                "名稱": st.column_config.TextColumn("名稱", pinned=True, width="medium"), 
-                "今日漲幅%": st.column_config.NumberColumn(format="%.2f %%"),
-                "股價": st.column_config.NumberColumn(format="%.2f"),
-                "回檔%": st.column_config.NumberColumn(format="%.2f %%"),
-                "集中度%": st.column_config.NumberColumn(format="%.2f %%"),
-                "成交額(億)": st.column_config.NumberColumn(format="%.2f 億"),
-                "本益比": st.column_config.NumberColumn(format="%.2f"),
-                "K線連結": st.column_config.LinkColumn("K線", display_text="📈查看")
+                "名稱": st.column_config.TextColumn("名稱", pinned=True, width="large"), # 改為 large 顯示完整 ETF 資訊
+                "產業": st.column_config.TextColumn("產業", width="medium"),
+                "今日漲幅%": st.column_config.NumberColumn("今日漲幅%", format="%.2f %%"),
+                "股價": st.column_config.NumberColumn("股價", format="%.2f"),
+                "回檔%": st.column_config.NumberColumn("回檔%", format="%.2f %%"),
+                "集中度%": st.column_config.NumberColumn("集中度%", format="%.2f %%"),
+                "支撐力道": st.column_config.TextColumn("支撐力道", width="medium"),
+                "成交額(億)": st.column_config.NumberColumn("成交額(億)", format="%.2f 億"),
+                "本益比": st.column_config.NumberColumn("本益比", format="%.2f"),
+                "K線連結": st.column_config.LinkColumn("K線", display_text="📈查看", width="small")
             },
             use_container_width=True,
             hide_index=True,
