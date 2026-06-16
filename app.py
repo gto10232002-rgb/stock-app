@@ -98,7 +98,6 @@ def get_stock_base_data_v3():
     df = pd.merge(df, df_pe, on='code', how='left') if not df_pe.empty else df.assign(pe=pd.NA)
     df = pd.merge(df, df_ind, on='code', how='left') if not df_ind.empty else df.assign(industry='其他')
     
-    # 確保產業代號格式正確，並映射為中文
     ind_map = {
         "01": "水泥工業", "02": "食品工業", "03": "塑膠工業", "04": "紡織纖維", "05": "電機機械",
         "06": "電器電纜", "07": "化學工業", "08": "生技醫療業", "09": "玻璃陶瓷", "10": "造紙工業",
@@ -107,7 +106,6 @@ def get_stock_base_data_v3():
         "24": "半導體業", "25": "電腦及週邊設備業", "26": "光電業", "27": "通信網路業", 
         "28": "電子零組件業", "29": "電子通路業", "30": "資訊服務業", "31": "其他電子業"
     }
-    # 強制將 industry 轉為字串並補齊兩位數，再進行對應
     df['industry'] = df['industry'].astype(str).str.strip().str.zfill(2)
     df['industry'] = df['industry'].map(ind_map).fillna(df['industry'])
     df['industry'] = df['industry'].replace(['', 'nan', 'None', 'NaN', '00'], '其他').fillna('其他')
@@ -123,7 +121,6 @@ def get_single_stock_tech(c):
     try:
         hist = yf.download(tk, period="1mo", progress=False, timeout=10)
         if not hist.empty and 'Close' in hist.columns and 'High' in hist.columns:
-            # 展平欄位名稱，避免 MultiIndex 問題
             if isinstance(hist.columns, pd.MultiIndex):
                 hist.columns = [col[0] for col in hist.columns]
                 
@@ -136,7 +133,7 @@ def get_single_stock_tech(c):
                 if h_max > 0: dd = round(((h_max - cur) / h_max) * 100, 2)
                 if prev > 0: chg = round(((cur - prev) / prev) * 100, 2)
     except Exception as e:
-        print(f"Error fetching {tk}: {e}") # 在伺服器日誌中記錄錯誤
+        pass
     return c, dd, chg
 
 def batch_append_tech_indicators(res_df):
@@ -175,12 +172,20 @@ try:
         min_v = st.sidebar.number_input("最低成交量(張)", value=1000)
         max_pe = st.sidebar.number_input("最高本益比 (0為不限)", value=30.0)
         
-        # 篩選特定產業的選單
         target_industry = st.sidebar.selectbox("篩選特定產業", ["全部"] + sorted(list(df['industry'].unique())))
         
         st.sidebar.header("🧠 進階策略加選")
         enable_drawdown = st.sidebar.checkbox("開啟「回檔策略」", value=False)
         enable_strong = st.sidebar.checkbox("開啟「近期強勢群組」", value=False)
+        
+        # --- 🛠️ 新增：策略組合方式選擇 ---
+        strategy_logic = "OR (符合任一)"
+        if enable_drawdown and enable_strong:
+            strategy_logic = st.sidebar.radio(
+                "策略組合方式",
+                ["OR (符合任一)", "AND (同時符合)"],
+                help="選擇 OR：只要符合其中一個策略就會顯示。選擇 AND：必須同時符合回檔與強勢條件。"
+            )
         
         dynamic_threshold = False
         support_mode = "全部符合"
@@ -212,6 +217,7 @@ try:
             res['回檔%'] = pd.Series(dtype=float)
             res['今日漲幅%'] = pd.Series(dtype=float)
 
+        # --- 🛠️ 更新：策略過濾邏輯 ---
         if not res.empty:
             mask_drawdown = pd.Series(False, index=res.index)
             mask_strong = pd.Series(False, index=res.index)
@@ -233,8 +239,12 @@ try:
             if enable_strong:
                 mask_strong = (res['今日漲幅%'] >= min_change)
             
+            # 套用組合邏輯
             if enable_drawdown and enable_strong:
-                res = res[mask_drawdown | mask_strong]
+                if strategy_logic == "AND (同時符合)":
+                    res = res[mask_drawdown & mask_strong]
+                else:
+                    res = res[mask_drawdown | mask_strong]
             elif enable_drawdown:
                 res = res[mask_drawdown]
             elif enable_strong:
@@ -308,8 +318,16 @@ try:
         active_strategies = []
         if enable_drawdown: active_strategies.append("回檔策略")
         if enable_strong: active_strategies.append("近期強勢群組")
-        strategy_text = " 或 ".join(active_strategies) if active_strategies else "純基礎條件"
         
+        # --- 🛠️ 更新：顯示目前邏輯的文字 ---
+        if len(active_strategies) == 2:
+            logic_text = "同時符合" if strategy_logic == "AND (同時符合)" else "符合任一"
+            strategy_text = f"回檔策略 {logic_text} 近期強勢群組"
+        elif len(active_strategies) == 1:
+            strategy_text = active_strategies[0]
+        else:
+            strategy_text = "純基礎條件"
+            
         is_advanced_strategy_active = enable_drawdown or enable_strong
         info_markdown = ""
         
@@ -337,12 +355,11 @@ try:
 
         st.info(info_markdown)
         
-        # --- 調整後的 dataframe 顯示設定 (確保凍結與寬度生效) ---
         st.dataframe(
             current_df[['代號', '名稱', '產業', '今日漲幅%', '股價', '回檔%', '集中度%', '支撐力道', '成交額(億)', '本益比', 'K線連結']],
             column_config={
-                "代號": st.column_config.TextColumn("代號", pinned=True),  # 移除強制 width
-                "名稱": st.column_config.TextColumn("名稱", pinned=True),  # 移除強制 width
+                "代號": st.column_config.TextColumn("代號", pinned=True),  
+                "名稱": st.column_config.TextColumn("名稱", pinned=True),  
                 "產業": st.column_config.TextColumn("產業"),
                 "今日漲幅%": st.column_config.NumberColumn("今日漲幅%", format="%.2f %%"),
                 "股價": st.column_config.NumberColumn("股價", format="%.2f"),
