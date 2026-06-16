@@ -20,6 +20,12 @@ st.markdown("""
 st.markdown("### 📊 台股多元策略選股系統")
 st.caption("📌 關盤資訊會在每日 18:30 之後導入")
 
+# 🛠️ 初始化 Session State 用於側邊欄策略互斥控制
+if 'drawdown' not in st.session_state:
+    st.session_state.drawdown = False
+if 'strong' not in st.session_state:
+    st.session_state.strong = False
+
 # ==========================================
 # 2. 獲取台股基礎資料 (證交所 Open API)
 # ==========================================
@@ -104,7 +110,7 @@ def get_stock_base_data_v3():
         "11": "鋼鐵工業", "12": "橡膠工業", "13": "汽車工業", "14": "建材營建", "15": "航運業",
         "16": "觀光餐旅", "17": "金融保險", "18": "貿易百貨", "19": "綜合業", "20": "其他業",
         "24": "半導體業", "25": "電腦及週邊設備業", "26": "光電業", "27": "通信網路業", 
-        "28": "電子零組件業", "29": "電子通路業", "30": "資訊服務業", "31": "其他電子業"
+        "28": "電子零組件業", "29": "電子通路業", "30": "資訊服務業", "31": "Technical業"
     }
     df['industry'] = df['industry'].astype(str).str.strip().str.zfill(2)
     df['industry'] = df['industry'].map(ind_map).fillna(df['industry'])
@@ -175,17 +181,18 @@ try:
         target_industry = st.sidebar.selectbox("篩選特定產業", ["全部"] + sorted(list(df['industry'].unique())))
         
         st.sidebar.header("🧠 進階策略加選")
-        enable_drawdown = st.sidebar.checkbox("開啟「回檔策略」", value=False)
-        enable_strong = st.sidebar.checkbox("開啟「近期強勢群組」", value=False)
         
-        # --- 🛠️ 新增：策略組合方式選擇 ---
-        strategy_logic = "OR (符合任一)"
-        if enable_drawdown and enable_strong:
-            strategy_logic = st.sidebar.radio(
-                "策略組合方式",
-                ["OR (符合任一)", "AND (同時符合)"],
-                help="選擇 OR：只要符合其中一個策略就會顯示。選擇 AND：必須同時符合回檔與強勢條件。"
-            )
+        # ─── 🛠️ 核心修改：利用 disabled 與 session_state 達成勾選 A 則 B 變灰底 ───
+        enable_drawdown = st.sidebar.checkbox(
+            "開啟「回檔策略」", 
+            key="drawdown", 
+            disabled=st.session_state.strong
+        )
+        enable_strong = st.sidebar.checkbox(
+            "開啟「近期強勢群組」", 
+            key="strong", 
+            disabled=st.session_state.drawdown
+        )
         
         dynamic_threshold = False
         support_mode = "全部符合"
@@ -217,11 +224,8 @@ try:
             res['回檔%'] = pd.Series(dtype=float)
             res['今日漲幅%'] = pd.Series(dtype=float)
 
-        # --- 🛠️ 更新：策略過濾邏輯 ---
+        # ─── 🛠️ 核心修改：簡化為互斥過濾邏輯 ───
         if not res.empty:
-            mask_drawdown = pd.Series(False, index=res.index)
-            mask_strong = pd.Series(False, index=res.index)
-            
             if enable_drawdown:
                 sub_mask = pd.Series(True, index=res.index)
                 if dynamic_threshold:
@@ -234,28 +238,18 @@ try:
                 sub_mask = sub_mask & (res['回檔%'] >= min_dd)
                 if support_mode == "波段洗刷接貨型":
                     sub_mask = sub_mask & (res['回檔%'] >= max(8.0, float(min_dd)))
-                mask_drawdown = sub_mask
+                res = res[sub_mask]
                 
-            if enable_strong:
-                mask_strong = (res['今日漲幅%'] >= min_change)
-            
-            # 套用組合邏輯
-            if enable_drawdown and enable_strong:
-                if strategy_logic == "AND (同時符合)":
-                    res = res[mask_drawdown & mask_strong]
-                else:
-                    res = res[mask_drawdown | mask_strong]
-            elif enable_drawdown:
-                res = res[mask_drawdown]
             elif enable_strong:
+                mask_strong = (res['今日漲幅%'] >= min_change)
                 res = res[mask_strong]
 
         res['支撐力道'] = "🔹 觀察中"
         if not res.empty:
-            res.loc[res['chip_ratio'] >= 10.0, '支撐力道'] = "🔥 極強支撐"
+            res.loc[res['chip_ratio'] >= 10.0, '支專力道'] = "🔥 極強支撐"
             res.loc[(res['chip_ratio'] >= 5.0) & (res['chip_ratio'] < 10.0), '支撐力道'] = "✅ 健康買盤"
             
-            if enable_strong and not enable_drawdown:
+            if enable_strong:
                 res = res.sort_values(by='今日漲幅%', ascending=False)
             else:
                 res = res.sort_values(by=['chip_ratio', '回檔%'], ascending=[False, False])
@@ -315,16 +309,11 @@ try:
             'chip_ratio': '集中度%', 'pe': '本益比', 'value_billion': '成交額(億)'
         })
         
-        active_strategies = []
-        if enable_drawdown: active_strategies.append("回檔策略")
-        if enable_strong: active_strategies.append("近期強勢群組")
-        
-        # --- 🛠️ 更新：顯示目前邏輯的文字 ---
-        if len(active_strategies) == 2:
-            logic_text = "同時符合" if strategy_logic == "AND (同時符合)" else "符合任一"
-            strategy_text = f"回檔策略 {logic_text} 近期強勢群組"
-        elif len(active_strategies) == 1:
-            strategy_text = active_strategies[0]
+        # 決定上方狀態文字
+        if enable_drawdown:
+            strategy_text = "回檔策略"
+        elif enable_strong:
+            strategy_text = "近期強勢群組"
         else:
             strategy_text = "純基礎條件"
             
