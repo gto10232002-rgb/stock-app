@@ -104,15 +104,29 @@ def get_stock_base_data_v3():
     df = pd.merge(df, df_pe, on='code', how='left') if not df_pe.empty else df.assign(pe=pd.NA)
     df = pd.merge(df, df_ind, on='code', how='left') if not df_ind.empty else df.assign(industry='其他')
     
+    # ─── 🛠️ 數據清洗與中文對應 ───
     ind_map = {
         "01": "水泥工業", "02": "食品工業", "03": "塑膠工業", "04": "紡織纖維", "05": "電機機械",
         "06": "電器電纜", "07": "化學工業", "08": "生技醫療業", "09": "玻璃陶瓷", "10": "造紙工業",
         "11": "鋼鐵工業", "12": "橡膠工業", "13": "汽車工業", "14": "建材營建", "15": "航運業",
         "16": "觀光餐旅", "17": "金融保險", "18": "貿易百貨", "19": "綜合業", "20": "其他業",
+        "21": "化學工業", "22": "生技醫療業", "23": "油電燃氣業",
         "24": "半導體業", "25": "電腦及週邊設備業", "26": "光電業", "27": "通信網路業", 
-        "28": "電子零組件業", "29": "電子通路業", "30": "資訊服務業", "31": "Technical業"
+        "28": "電子零組件業", "29": "電子通路業", "30": "資訊服務業", "31": "其他電子業",
+        "32": "文化創意業", "33": "農業科技業", "34": "電子商務業", "35": "綠能環保業",
+        "36": "數位雲端業", "37": "運動休閒業", "38": "居家生活業"
     }
-    df['industry'] = df['industry'].astype(str).str.strip().str.zfill(2)
+    
+    def to_clean_code(x):
+        s = str(x).strip()
+        if s.endswith('.0'):  
+            s = s[:-2]
+        if s.isdigit():       
+            return s.zfill(2)
+        return s
+
+    # 確保轉換完全
+    df['industry'] = df['industry'].apply(to_clean_code)
     df['industry'] = df['industry'].map(ind_map).fillna(df['industry'])
     df['industry'] = df['industry'].replace(['', 'nan', 'None', 'NaN', '00'], '其他').fillna('其他')
 
@@ -182,7 +196,6 @@ try:
         
         st.sidebar.header("🧠 進階策略加選")
         
-        # ─── 🛠️ 核心修改：利用 disabled 與 session_state 達成勾選 A 則 B 變灰底 ───
         enable_drawdown = st.sidebar.checkbox(
             "開啟「回檔策略」", 
             key="drawdown", 
@@ -224,7 +237,6 @@ try:
             res['回檔%'] = pd.Series(dtype=float)
             res['今日漲幅%'] = pd.Series(dtype=float)
 
-        # ─── 🛠️ 核心修改：簡化為互斥過濾邏輯 ───
         if not res.empty:
             if enable_drawdown:
                 sub_mask = pd.Series(True, index=res.index)
@@ -246,7 +258,7 @@ try:
 
         res['支撐力道'] = "🔹 觀察中"
         if not res.empty:
-            res.loc[res['chip_ratio'] >= 10.0, '支專力道'] = "🔥 極強支撐"
+            res.loc[res['chip_ratio'] >= 10.0, '支撐力道'] = "🔥 極強支撐"
             res.loc[(res['chip_ratio'] >= 5.0) & (res['chip_ratio'] < 10.0), '支撐力道'] = "✅ 健康買盤"
             
             if enable_strong:
@@ -304,12 +316,12 @@ try:
         if not res.empty:
             res['name'] = res.apply(merge_etf_info, axis=1)
 
+        # ─── 🛠️ 核心修正：確保在 info 統計前，欄位完全對應 ───
         display_df = res.rename(columns={
             'code': '代號', 'name': '名稱', 'industry': '產業', 'price': '股價', 
             'chip_ratio': '集中度%', 'pe': '本益比', 'value_billion': '成交額(億)'
         })
         
-        # 決定上方狀態文字
         if enable_drawdown:
             strategy_text = "回檔策略"
         elif enable_strong:
@@ -325,6 +337,7 @@ try:
             current_df = display_df
             
             if is_advanced_strategy_active:
+                # 這裡抓到的 display_df['產業'] 現在 100% 已經是中文名稱了
                 ind_counts = display_df['產業'].value_counts()
                 filtered_ind = [f"{ind}: {count} 檔" for ind, count in ind_counts.items() if count >= 3]
                 
