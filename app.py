@@ -4,6 +4,7 @@ import requests
 import datetime
 import yfinance as yf
 import concurrent.futures
+from io import StringIO
 
 # ==========================================
 # 1. 頁面配置與 CSS
@@ -21,25 +22,56 @@ st.markdown("### 📊 台股多元策略選股系統")
 st.caption("📌 關盤資訊會在每日 18:30 之後導入")
 
 # ==========================================
-# 2. 獲取台股基礎資料 (證交所 Open API)
+# 2. 獲取台股基礎資料 (證交所 Open API + 官方備用機制)
 # ==========================================
 @st.cache_data(ttl=3600)
 def get_stock_base_data_v6():
     cols = ['code', 'name', 'price', 'vol', 'trade_value', 'pe', 'industry', 'chip_ratio', 'value_billion']
     empty_df = pd.DataFrame(columns=cols)
 
+    # 🌟【第一道防線】共用安全的瀏覽器標頭，防止被證交所防火牆判定為惡意爬蟲而阻擋
+    headers = {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+    }
+
     df_price = pd.DataFrame()
     try:
-        res_p = requests.get("https://openapi.twse.com.tw/v1/exchangeReport/STOCK_DAY_ALL", timeout=15)
-        if res_p.status_code == 200 and res_p.json():
-            raw = pd.DataFrame(res_p.json())
-            df_price = raw[raw['Code'].str.len() == 4].copy()
-            df_price['price'] = pd.to_numeric(df_price['ClosingPrice'].str.replace(',', ''), errors='coerce')
-            df_price['vol'] = pd.to_numeric(df_price['TradeVolume'].str.replace(',', ''), errors='coerce') / 1000
-            df_price['trade_value'] = pd.to_numeric(df_price['TradeValue'].str.replace(',', ''), errors='coerce')
+        # 【主線方案】嘗試從 TWSE OpenAPI 抓取即時盤後行情
+        res_p = requests.get("https://openapi.twse.com.tw/v1/exchangeReport/STOCK_DAY_ALL", headers=headers, timeout=15)
+        if res_p.status_code == 200:
+            try:
+                # 🌟【第二道防線】安全解析 JSON，避免非 JSON 回傳（如 HTML 錯誤頁面）引發系統崩潰
+                raw = pd.DataFrame(res_p.json())
+                if not raw.empty and 'Code' in raw.columns:
+                    df_price = raw.copy()
+            except ValueError:
+                pass  # 解析失敗時直接交給下方的備用防線處理
+        
+        # 🌟【第三道防線】若主線 OpenAPI 被雲端 IP 阻擋、限流或解析失敗，則切換至證交所官方傳統 Open Data 備用機制 (CSV 格式)
+        if df_price.empty:
+            fallback_url = "https://www.twse.com.tw/exchangeReport/STOCK_DAY_ALL?response=open_data"
+            res_fb = requests.get(fallback_url, headers=headers, timeout=15)
+            if res_fb.status_code == 200:
+                df_fb = pd.read_csv(StringIO(res_fb.text), dtype=str)
+                if not df_fb.empty and '證券代號' in df_fb.columns:
+                    # 將傳統網頁欄位名稱對齊 OpenAPI 欄位格式，以利後續邏輯無縫接軌
+                    df_price = df_fb.rename(columns={
+                        '證券代號': 'Code',
+                        '證券名稱': 'Name',
+                        '收盤價': 'ClosingPrice',
+                        '成交股數': 'TradeVolume',
+                        '成交金額': 'TradeValue'
+                    })
+
+        # 開始處理收集到的股價數據
+        if not df_price.empty:
+            df_price = df_price[df_price['Code'].str.len() == 4].copy()
+            df_price['price'] = pd.to_numeric(df_price['ClosingPrice'].astype(str).str.replace(',', ''), errors='coerce')
+            df_price['vol'] = pd.to_numeric(df_price['TradeVolume'].astype(str).str.replace(',', ''), errors='coerce') / 1000
+            df_price['trade_value'] = pd.to_numeric(df_price['TradeValue'].astype(str).str.replace(',', ''), errors='coerce')
             df_price = df_price[['Code', 'Name', 'price', 'vol', 'trade_value']].rename(columns={'Code': 'code', 'Name': 'name'})
             
-            # 🌟【核心防線】源頭全面封殺所有 91 開頭的存託憑證(TDR)
+            # 源頭全面封殺所有 91 開頭的存託憑證(TDR)
             df_price = df_price[~df_price['code'].str.startswith('91')]
     except Exception as e:
         st.sidebar.error(f"⚠️ 股價API異常: {e}")
@@ -47,27 +79,45 @@ def get_stock_base_data_v6():
     if df_price.empty:
         return empty_df
 
+    # 獲取本益比資料 (同樣配置主線與備用雙軌防線機制)
     df_pe = pd.DataFrame()
     try:
-        res_pe = requests.get("https://openapi.twse.com.tw/v1/exchangeReport/BWIBBU_ALL", timeout=15)
-        if res_pe.status_code == 200 and res_pe.json():
-            raw_pe = pd.DataFrame(res_pe.json())
-            df_pe = raw_pe[['Code', 'PEratio']].rename(columns={'Code': 'code', 'PEratio': 'pe'})
-            df_pe['pe'] = pd.to_numeric(df_pe['pe'].str.replace(',', ''), errors='coerce')
+        res_pe = requests.get("https://openapi.twse.com.tw/v1/exchangeReport/BWIBBU_ALL", headers=headers, timeout=15)
+        if res_pe.status_code == 200:
+            try:
+                raw_pe = pd.DataFrame(res_pe.json())
+                df_pe = raw_pe[['Code', 'PEratio']].rename(columns={'Code': 'code', 'PEratio': 'pe'})
+            except Exception:
+                pass
+                
+        # 本益比備用防線 (CSV 機制)
+        if df_pe.empty:
+            res_pe_fb = requests.get("https://www.twse.com.tw/exchangeReport/BWIBBU_ALL?response=open_data", headers=headers, timeout=15)
+            if res_pe_fb.status_code == 200:
+                df_pe_fb = pd.read_csv(StringIO(res_pe_fb.text), dtype=str)
+                if not df_pe_fb.empty and '證券代號' in df_pe_fb.columns:
+                    df_pe = df_pe_fb[['證券代號', '本益比']].rename(columns={'證券代號': 'code', '本益比': 'pe'})
+
+        if not df_pe.empty:
+            df_pe['pe'] = pd.to_numeric(df_pe['pe'].astype(str).str.replace(',', ''), errors='coerce')
     except Exception:
         pass
 
+    # 獲取產業別資料 (補齊 Headers 避免被擋)
     df_ind = pd.DataFrame()
     try:
-        res_ind = requests.get("https://openapi.twse.com.tw/v1/opendata/t187ap03_L", timeout=15)
-        if res_ind.status_code == 200 and res_ind.json():
-            raw_ind = pd.DataFrame(res_ind.json())
-            df_ind = raw_ind[['公司代號', '產業別']].rename(columns={'公司代號': 'code', '產業別': 'industry'})
+        res_ind = requests.get("https://openapi.twse.com.tw/v1/opendata/t187ap03_L", headers=headers, timeout=15)
+        if res_ind.status_code == 200:
+            try:
+                raw_ind = pd.DataFrame(res_ind.json())
+                df_ind = raw_ind[['公司代號', '產業別']].rename(columns={'公司代號': 'code', '產業別': 'industry'})
+            except Exception:
+                pass
     except Exception:
         pass
 
+    # 獲取三大法人籌碼資料
     df_chips = pd.DataFrame()
-    headers = {'User-Agent': 'Mozilla/5.0'}
     for i in range(7):
         d_str = (datetime.datetime.now() - datetime.timedelta(days=i)).strftime("%Y%m%d")
         url = f"https://www.twse.com.tw/rwd/zh/fund/T86?date={d_str}&selectType=ALLBUT0999&response=json"
@@ -86,6 +136,7 @@ def get_stock_base_data_v6():
         except Exception:
             continue
 
+    # 資料合併與指標計算
     df = pd.merge(df_price, df_chips, on='code', how='left') if not df_chips.empty else df_price.copy()
     
     df['fi'] = pd.to_numeric(df.get('fi', 0.0), errors='coerce').fillna(0.0)
@@ -260,6 +311,7 @@ try:
 
         res['K線連結'] = res['code'].apply(lambda x: f"https://tw.stock.yahoo.com/quote/{x}")
         
+        # ETF 資料庫對照
         etf_db = {
             "2330": ["0050", "00919", "00929"], "2317": ["0050", "00919", "00929"], 
             "2454": ["0050", "0056", "00878", "00919", "00929", "00940"], "2308": ["0050", "00929"], 
@@ -359,7 +411,7 @@ try:
 
         st.info(info_markdown)
         
-        # 📊 移除 pinned 錯誤參數，恢復百分之百穩定繪製
+        # 📊 穩定繪製資料表
         st.dataframe(
             current_df[['代號', '名稱', '產業', '今日漲幅%', '股價', '回檔%', '集中度%', '支撐力道', '成交額(億)', '本益比', 'K線連結']],
             column_config={
