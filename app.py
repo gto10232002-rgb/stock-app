@@ -287,4 +287,103 @@ try:
             "4938": ["0056", "00929", "00940"], "3293": ["0056", "00878", "00940"], 
             "2474": ["0056", "00878", "00940"], "3005": ["0056", "00940"], "2379": ["0056", "00878", "00940"], 
             "2404": ["0056", "00919", "00929", "00940"], "6121": ["0056"], 
-            "2618": ["0056", "00878", "00919", "00940"], "
+            "2618": ["0056", "00878", "00919", "00940"], "5347": ["0056", "00878", "00919"],
+            "3044": ["0056", "00929", "00940"], "2610": ["0056", "00940"], "3036": ["0056", "00929", "00940"],
+            "1504": ["0056", "00940"], "2312": ["0056", "00940"], "2458": ["0056", "00940"], 
+            "3042": ["0056", "00940"], "5469": ["0056", "00940"], "6278": ["0056", "00940"], 
+            "2915": ["0056", "00940"], "8069": ["0056", "00940"], "3023": ["0056", "00940"], 
+            "2421": ["0056", "00940"], "6414": ["0056", "00940"], "3406": ["0056", "00919", "00940"],
+            "2439": ["0056", "00940"], "6188": ["0056", "00940"], "6285": ["0056", "00940"], 
+            "8016": ["0056", "00940"], "6139": ["0056", "00940"], "5269": ["0056", "00940"], 
+            "6196": ["0056", "00940"], "6239": ["0056", "00919", "00929", "00940"], "4958": ["00878", "00919"], 
+            "1402": ["00878"], "2912": ["00878", "00940"], "2609": ["00919"], "8209": ["00919"],
+            "6488": ["00929", "00940"], "2801": ["00940"], "9904": ["00940"], "1102": ["00940"], 
+            "4915": ["00940"], "2615": ["00940"], "1319": ["00940"], "3706": ["00940"], 
+            "6176": ["00940"], "1513": ["00940"], "2393": ["00940"], "6257": ["00940"]
+        }
+
+        def merge_etf_info(row):
+            c = str(row['code']).strip()
+            n = str(row['name']).strip()
+            if c in etf_db: return f"{n} ({','.join(etf_db[c])})"
+            return n
+
+        if not res.empty:
+            res['name'] = res.apply(merge_etf_info, axis=1)
+
+        display_df = res.rename(columns={
+            'code': '代號', 'name': '名稱', 'industry': '產業', 'price': '股價', 
+            'chip_ratio': '集中度%', 'pe': '本益比', 'value_billion': '成交額(億)'
+        })
+        
+        # 🌟【全新功能：穩定版個股搜尋框】🌟
+        # 置於中央主畫面最上方，100% 避免手機側邊欄重繪與縮放 Bug
+        search_query = st.text_input(
+            "🔍 個股快速搜尋 (支援輸入股票代號或中文名稱)", 
+            value="", 
+            placeholder="請在此輸入代號或名稱，例如: 2330 或 台積電"
+        ).strip()
+        
+        # 執行個股搜尋過濾
+        if search_query and not display_df.empty:
+            search_mask = display_df['代號'].astype(str).str.contains(search_query, case=False, na=False) | \
+                          display_df['名稱'].astype(str).str.contains(search_query, case=False, na=False)
+            display_df = display_df[search_mask]
+        
+        if enable_drawdown:
+            strategy_text = "回檔策略"
+        elif enable_strong:
+            strategy_text = "近期強勢群組"
+        else:
+            strategy_text = "純基礎條件"
+            
+        is_advanced_strategy_active = enable_drawdown or enable_strong
+        info_markdown = ""
+        
+        if not display_df.empty:
+            total_count = len(display_df)
+            current_df = display_df
+            
+            if is_advanced_strategy_active:
+                ind_counts = display_df['產業'].value_counts()
+                filtered_ind = [f"{ind}: {count} 檔" for ind, count in ind_counts.items() if count >= 3]
+                
+                if filtered_ind:
+                    ind_lines = "\n".join([f"* {item}" for item in filtered_ind])
+                    info_markdown = f"🎯 當前過濾組合：【{strategy_text}】\n\n**最終符合條件：{total_count} 檔**\n\n{ind_lines}"
+                else:
+                    info_markdown = f"🎯 當前過濾組合：【{strategy_text}】\n\n**最終符合條件：{total_count} 檔**\n\n* （目前沒有3檔以上共同產業的主力出現）"
+            else:
+                info_markdown = f"🎯 當前過濾組合：【{strategy_text}】\n\n**最終符合條件：{total_count} 檔**"
+        else:
+            current_df = pd.DataFrame(columns=['代號', '名稱', '產業', '今日漲幅%', '股價', '回檔%', '集中度%', '支撐力道', '成交額(億)', '本益比', 'K線連結'])
+            if is_advanced_strategy_active:
+                info_markdown = f"🎯 當前過濾組合：【{strategy_text}】\n\n**最終符合條件：0 檔**\n\n* （目前沒有3檔以上共同產業的主力出現）"
+            else:
+                info_markdown = f"🎯 當前過濾組合：【{strategy_text}】\n\n**最終符合條件：0 檔**"
+
+        st.info(info_markdown)
+        
+        # 呈現最终表格
+        st.dataframe(
+            current_df[['代號', '名稱', '產業', '今日漲幅%', '股價', '回檔%', '集中度%', '支撐力道', '成交額(億)', '本益比', 'K線連結']],
+            column_config={
+                "代號": st.column_config.TextColumn("代號", pinned=True),  
+                "名稱": st.column_config.TextColumn("名稱", pinned=True),  
+                "產業": st.column_config.TextColumn("產業"),
+                "今日漲幅%": st.column_config.NumberColumn("今日漲幅%", format="%.2f %%"),
+                "股價": st.column_config.NumberColumn("股價", format="%.2f"),
+                "回檔%": st.column_config.NumberColumn("回檔%", format="%.2f %%"),
+                "集中度%": st.column_config.NumberColumn("集中度%", format="%.2f %%"),
+                "支撐力道": st.column_config.TextColumn("支撐力道"),
+                "成交額(億)": st.column_config.NumberColumn("成交額(億)", format="%.2f 億"),
+                "本益比": st.column_config.NumberColumn("本益比", format="%.2f"),
+                "K線連結": st.column_config.LinkColumn("K線", display_text="📈查看")
+            },
+            use_container_width=True,
+            hide_index=True,
+            height=650
+        )
+
+except Exception as e:
+    st.error(f"⚠️ 網頁系統執行異常: {e}")
