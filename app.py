@@ -191,7 +191,6 @@ try:
     if df.empty:
         st.warning("📅 暫時無法從證交所取得完整即時資料。請確認網路連線或是否為非交易時間。")
     else:
-        # 📌 保持不變：左側穩定型控制元件（無任何輸入框，100%防止跳動）
         with st.sidebar.form(key="filter_form"):
             st.header("🎯 基礎篩選條件")
             
@@ -209,7 +208,7 @@ try:
             enable_drawdown = (strategy_mode == "開啟「回檔策略」")
             enable_strong = (strategy_mode == "開啟「近期強勢群組」")
             
-            support_mode = st.radio("└ 籌碼支撐型態 (僅回檔策略有效)", options=["全部符合", "單日爆發強勢型", "波段洗刷接貨型"], index=0)
+            support_mode = st.radio("└ 籌碼支嚀型態 (僅回檔策略有效)", options=["全部符合", "單日爆發強勢型", "波段洗刷接貨型"], index=0)
             dynamic_threshold = st.checkbox("└ 啟用股本規模動態門檻調整 (僅回檔策略有效)", value=True)
             
             min_dd = st.select_slider("└ 最低回檔幅度(%) (僅回檔策略有效)", options=[0, 3, 5, 8, 10, 15, 20, 25, 30, 40, 50], value=5)
@@ -217,7 +216,6 @@ try:
             
             submit_button = st.form_submit_button(label="🚀 套用篩選條件")
         
-        # 資料過濾處理
         res = df[(df['price'] >= min_p) & (df['price'] <= max_p) & (df['vol'] >= min_v)].copy()
         if max_pe > 0:
             res = res[((res['pe'] > 0) & (res['pe'] <= max_pe)).fillna(False)]
@@ -262,7 +260,6 @@ try:
 
         res['K線連結'] = res['code'].apply(lambda x: f"https://tw.stock.yahoo.com/quote/{x}")
         
-        # ETF 資料庫整合
         etf_db = {
             "2330": ["0050", "00919", "00929"], "2317": ["0050", "00919", "00929"], 
             "2454": ["0050", "0056", "00878", "00919", "00929", "00940"], "2308": ["0050", "00929"], 
@@ -316,15 +313,13 @@ try:
             'chip_ratio': '集中度%', 'pe': '本益比', 'value_billion': '成交額(億)'
         })
         
-        # 🌟【全新功能：穩定版個股搜尋框】🌟
-        # 置於中央主畫面最上方，100% 避免手機側邊欄重繪與縮放 Bug
+        # 🔍 精簡安全的個股快速搜尋框
         search_query = st.text_input(
             "🔍 個股快速搜尋 (支援輸入股票代號或中文名稱)", 
             value="", 
             placeholder="請在此輸入代號或名稱，例如: 2330 或 台積電"
         ).strip()
         
-        # 執行個股搜尋過濾
         if search_query and not display_df.empty:
             search_mask = display_df['代號'].astype(str).str.contains(search_query, case=False, na=False) | \
                           display_df['名稱'].astype(str).str.contains(search_query, case=False, na=False)
@@ -364,12 +359,12 @@ try:
 
         st.info(info_markdown)
         
-        # 呈現最终表格
+        # 📊 移除 pinned 錯誤參數，恢復百分之百穩定繪製
         st.dataframe(
             current_df[['代號', '名稱', '產業', '今日漲幅%', '股價', '回檔%', '集中度%', '支撐力道', '成交額(億)', '本益比', 'K線連結']],
             column_config={
-                "代號": st.column_config.TextColumn("代號", pinned=True),  
-                "名稱": st.column_config.TextColumn("名稱", pinned=True),  
+                "代號": st.column_config.TextColumn("代號"),  
+                "名稱": st.column_config.TextColumn("名稱"),  
                 "產業": st.column_config.TextColumn("產業"),
                 "今日漲幅%": st.column_config.NumberColumn("今日漲幅%", format="%.2f %%"),
                 "股價": st.column_config.NumberColumn("股價", format="%.2f"),
