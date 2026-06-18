@@ -6,7 +6,7 @@ import datetime
 # 1. 網頁基本配置
 st.set_page_config(page_title="台股多元策略選股系統", layout="wide")
 
-# 【優化】配合手機排版，縮小紅圈處的主標體字體大小 (改為 24px)
+# 配合手機排版，固定微縮主標題字體大小 (24px)
 st.markdown("<h2 style='font-size: 24px; font-weight: bold; margin-bottom: 5px;'>📊 台股多元策略選股系統</h2>", unsafe_allow_html=True)
 st.caption("📌 關閉資訊會在每日 18:30 之後導入")
 
@@ -39,7 +39,7 @@ if os.path.exists(CSV_FILE):
             df.columns = [str(c).strip() for c in df.columns]
             raw_csv_columns = list(df.columns)
             
-            # 第一階段：標準核心與進階籌碼欄位（全面擴充英文對照，導回主力支撐）
+            # 第一階段：標準核心與進階籌碼欄位（全面納入 PE 與 ROE 對照）
             column_mapping = {
                 'date': '日期', '年月日': '日期', '交易日期': '日期',
                 'code': '代號', 'stock_id': '代號', 'stock_no': '代號', '證券代號': '代號', '股票代號': '代號',
@@ -49,7 +49,8 @@ if os.path.exists(CSV_FILE):
                 'change_percent': '今日漲幅%', '漲跌幅': '今日漲幅%', '漲幅': '今日漲幅%', '漲跌百分比': '今日漲幅%', '今日漲幅%': '今日漲幅%',
                 'back_percent': '回檔%', '回檔': '回檔%', '回檔%': '回檔%',
                 'volume': '成交量', 'tradevolume': '成交量', '成交股數': '成交量', '成交張數': '成交量', '張數': '成交量', '總量': '成交量', '成交量(張)': '成交量', 'vol': '成交量',
-                'chip_success': '主力支撐/籌碼判定', 'chip_ratio': '主力籌碼比%', 'trade_value': '成交值(萬)', 'value_billion': '市值(億)', 'pe': '本益比'
+                'chip_success': '主力支撐/籌碼判定', 'chip_ratio': '主力籌碼比%', 'trade_value': '成交值(萬)', 'value_billion': '市值(億)', 
+                'pe': '本益比', 'pe_ratio': '本益比', 'roe': 'ROE', '股東權益報酬率': 'ROE'
             }
             
             new_cols = [column_mapping.get(col.lower(), column_mapping.get(col, col)) for col in df.columns]
@@ -71,7 +72,7 @@ if os.path.exists(CSV_FILE):
                 df.rename(columns={df.columns[0]: '代號'}, inplace=True)
             
             # 紀錄最終配對狀態供前端即時診斷
-            for target in ['代號', '名稱', '股價', '成交量', '今日漲幅%']:
+            for target in ['代號', '名稱', '股價', '成交量', '今日漲幅%', '本益比', 'ROE']:
                 matched_status[target] = "✅ 已成功對齊" if target in df.columns else "❌ 未找到對應欄位"
             
             # 處理日期分切邏輯
@@ -94,6 +95,10 @@ if os.path.exists(CSV_FILE):
                 df_today['今日漲幅%'] = safe_to_numeric(df_today['今日漲幅%'])
             if '回檔%' in df_today.columns:
                 df_today['回檔%'] = safe_to_numeric(df_today['回檔%'])
+            if '本益比' in df_today.columns:
+                df_today['本益比'] = safe_to_numeric(df_today['本益比'])
+            if 'ROE' in df_today.columns:
+                df_today['ROE'] = safe_to_numeric(df_today['ROE'])
                 
             if '成交量' in df_today.columns:
                 df_today['成交量'] = safe_to_numeric(df_today['成交量'])
@@ -108,16 +113,26 @@ else:
     app_error = "找不到資料庫檔案 (stock_data.csv)"
 
 # =========================================================================
-# 【版面配置】左側策略控制台 (Sidebar) 結構與佈局絕對固定
+# 【版面配置】左側策略控制台 (Sidebar) 結構與佈局絕對固定 - 設定指定初始值
 # =========================================================================
 st.sidebar.header("🎯 策略篩選控制台")
 
 st.sidebar.subheader("🛡️ 1. 基礎過濾條件")
 filter_ordinary = st.sidebar.checkbox("僅限上市櫃普通股 (4/6碼)", value=True)
-min_price = st.sidebar.number_input("最低股價門檻 (元)", min_value=0.0, value=10.0, step=1.0)
 
-# 【核心修正】將成交量門檻預設值改為 0，防止成功對齊後因預設 1000 導致股票變 0 檔
-min_volume = st.sidebar.number_input("最低成交量門檻 (張)", min_value=0, value=0, step=100)
+# 配合要求：股價區間預設 10 至 150 元
+min_price = st.sidebar.number_input("最低股價門檻 (元)", min_value=0.0, value=10.0, step=1.0)
+max_price = st.sidebar.number_input("最高股價門檻 (元)", min_value=0.0, value=150.0, step=1.0)
+
+# 配合要求：當日成交量大於 1,000 張
+min_volume = st.sidebar.number_input("最低成交量門檻 (張)", min_value=0, value=1000, step=100)
+
+# 配合要求：本益比介於 5 倍至 30 倍
+min_pe = st.sidebar.number_input("最低本益比門檻 (倍)", min_value=0.0, value=5.0, step=1.0)
+max_pe = st.sidebar.number_input("最高本益比門檻 (倍)", min_value=0.0, value=30.0, step=1.0)
+
+# 配合要求：ROE 大於 5%
+min_roe = st.sidebar.number_input("最低 ROE 門檻 (%)", min_value=-100.0, value=5.0, step=0.5)
 
 st.sidebar.subheader("📈 2. 核心選股策略")
 strategy_option = st.sidebar.selectbox(
@@ -130,9 +145,9 @@ if strategy_option == "精選回檔策略":
     max_back_pct = st.sidebar.slider("最大容許回檔幅度 (%)", min_value=0.0, max_value=50.0, value=15.0, step=0.5)
 
 # =========================================================================
-# 3. 系統後台診斷報告區（主畫面頂部）
+# 3. 系統後台診斷報告區（主畫面頂部）- 【優化】預設不自動展開 (expanded=False)
 # =========================================================================
-with st.expander("🔍 系統後台資料連線診斷報告 (點擊展開)", expanded=True):
+with st.expander("🔍 系統後台資料連線診斷報告 (點擊展開)", expanded=False):
     if raw_csv_columns:
         st.markdown(f"📋 **CSV 原始欄位：** `{raw_csv_columns}`")
         status_line = " | ".join([f"{k}: {v}" for k, v in matched_status.items()])
@@ -166,7 +181,7 @@ with st.expander("🔍 系統後台資料連線診斷報告 (點擊展開)", exp
         )
 
 # =========================================================================
-# 4. 背景安全執行篩選邏輯
+# 4. 背景安全執行篩選邏輯 - 全面應用指定條件篩選第一畫面資料
 # =========================================================================
 final_df = pd.DataFrame()
 
@@ -177,11 +192,21 @@ if not app_error and not df_today.empty:
     if filter_ordinary and '代號' in working_df.columns:
         working_df = working_df[working_df['代號'].str.len().isin([4, 6]) & working_df['代號'].str.isdigit()]
         
+    # 股價區間 10 ~ 150 元
     if '股價' in working_df.columns and working_df['股價'].max() > 0:
-        working_df = working_df[working_df['股價'] >= min_price]
+        working_df = working_df[(working_df['股價'] >= min_price) & (working_df['股價'] <= max_price)]
         
+    # 流動性門檻：成交量 >= 1,000 張
     if '成交量' in working_df.columns and working_df['成交量'].max() > 0:
         working_df = working_df[working_df['成交量'] >= min_volume]
+        
+    # 本益比過濾 5 ~ 30 倍
+    if '本益比' in working_df.columns and working_df['本益比'].max() > 0:
+        working_df = working_df[(working_df['本益比'] >= min_pe) & (working_df['本益比'] <= max_pe)]
+        
+    # ROE 獲利基本效率過濾 > 5%
+    if 'ROE' in working_df.columns and working_df['ROE'].max() > 0:
+        working_df = working_df[working_df['ROE'] >= min_roe]
         
     # B. 執行核心選股策略
     if strategy_option == "強勢群組選股":
@@ -191,11 +216,11 @@ if not app_error and not df_today.empty:
         if '回檔%' in working_df.columns:
             working_df = working_df[working_df['回檔%'] <= max_back_pct]
     
-    # C. 【核心優化】全自動無損輸出：建立理想排序，並保留所有既有欄位（主力支撐、籌碼等）
-    ideal_order = ['代號', '名稱', '產業', '股價', '今日漲幅%', '成交量', '回檔%', '主力支撐/籌碼判定', '主力籌碼比%']
+    # C. 動態建構最終要顯示的看板欄位
+    ideal_order = ['代號', '名稱', '產業', '股價', '今日漲幅%', '成交量', '本益比', 'ROE', '回檔%', '主力支撐/籌碼判定', '主力籌碼比%']
     
     expected_cols = [col for col in ideal_order if col in working_df.columns]
-    # 將剩餘 CSV 中有出現但沒在理想排序裡的其餘欄位也全部追加進去，絕不遮蔽任何資料
+    # 追加其餘 CSV 中存在但未列在理想排序中的擴充欄位
     for col in working_df.columns:
         if col not in expected_cols and col != '日期':
             expected_cols.append(col)
