@@ -5,7 +5,9 @@ import datetime
 
 # 1. 網頁基本配置
 st.set_page_config(page_title="台股多元策略選股系統", layout="wide")
-st.title("📊 台股多元策略選股系統")
+
+# 【優化】配合手機排版，縮小紅圈處的主標體字體大小 (改為 24px)
+st.markdown("<h2 style='font-size: 24px; font-weight: bold; margin-bottom: 5px;'>📊 台股多元策略選股系統</h2>", unsafe_allow_html=True)
 st.caption("📌 關閉資訊會在每日 18:30 之後導入")
 
 # 資料庫檔案名稱
@@ -25,9 +27,7 @@ def safe_to_numeric(series):
     """安全轉換數值函數：自動剔除千分位逗號與百分比符號，防止 Pandas 轉型失敗補零"""
     if series.empty:
         return series
-    # 轉為字串並移除逗號、百分比及前後空白
     s = series.astype(str).str.replace(',', '', regex=False).str.replace('%', '', regex=False).str.strip()
-    # 將台股常見的停牌或無交易符號 '--' 替換為 '0'
     s = s.replace(['--', '---', 'null', 'None', 'nan', 'NaN', ''], '0')
     return pd.to_numeric(s, errors='coerce').fillna(0.0)
 
@@ -39,22 +39,23 @@ if os.path.exists(CSV_FILE):
             df.columns = [str(c).strip() for c in df.columns]
             raw_csv_columns = list(df.columns)
             
-            # 第一階段：標準核心欄位英漢對照表（全面擴充成交量與籌碼變體）
+            # 第一階段：標準核心與進階籌碼欄位（全面擴充英文對照，導回主力支撐）
             column_mapping = {
                 'date': '日期', '年月日': '日期', '交易日期': '日期',
                 'code': '代號', 'stock_id': '代號', 'stock_no': '代號', '證券代號': '代號', '股票代號': '代號',
                 'name': '名稱', '證券名稱': '名稱', '股票名稱': '名稱',
                 'industry': '產業', '產業別': '產業',
-                'close': '股價', '收盤價': '股價', 'closingprice': '股價', '當盤關閉': '股價', '價格': '股價',
-                'change_percent': '今日漲幅%', '漲跌幅': '今日漲幅%', '漲幅': '今日漲幅%', '漲跌百分比': '今日漲幅%',
-                'back_percent': '回檔%', '回檔': '回檔%', 
-                'volume': '成交量', 'tradevolume': '成交量', '成交股數': '成交量', '成交張數': '成交量', '張數': '成交量', '總量': '成交量', '成交量(張)': '成交量'
+                'close': '股價', '收盤價': '股價', 'closingprice': '股價', '當盤關閉': '股價', '價格': '股價', 'price': '股價',
+                'change_percent': '今日漲幅%', '漲跌幅': '今日漲幅%', '漲幅': '今日漲幅%', '漲跌百分比': '今日漲幅%', '今日漲幅%': '今日漲幅%',
+                'back_percent': '回檔%', '回檔': '回檔%', '回檔%': '回檔%',
+                'volume': '成交量', 'tradevolume': '成交量', '成交股數': '成交量', '成交張數': '成交量', '張數': '成交量', '總量': '成交量', '成交量(張)': '成交量', 'vol': '成交量',
+                'chip_success': '主力支撐/籌碼判定', 'chip_ratio': '主力籌碼比%', 'trade_value': '成交值(萬)', 'value_billion': '市值(億)', 'pe': '本益比'
             }
             
             new_cols = [column_mapping.get(col.lower(), column_mapping.get(col, col)) for col in df.columns]
             df.columns = new_cols
             
-            # 第二階段：智能特徵兜底探測（模糊捕捉）
+            # 第二階段：智能特徵模糊兜底探測
             for col in df.columns:
                 c_lower = col.lower()
                 if '股價' not in df.columns and ('close' in c_lower or 'price' in c_lower or '收盤' in col) and not any(k in col for k in ['開盤', '最高', '最低']):
@@ -72,11 +73,6 @@ if os.path.exists(CSV_FILE):
             # 紀錄最終配對狀態供前端即時診斷
             for target in ['代號', '名稱', '股價', '成交量', '今日漲幅%']:
                 matched_status[target] = "✅ 已成功對齊" if target in df.columns else "❌ 未找到對應欄位"
-            
-            # 偵測是否有主力籌碼與支撐欄位存在
-            has_chip_info = any(any(k in col for k in ['支撐', '主力', '外資', '投信', '籌碼']) for col in df.columns)
-            if has_chip_info:
-                matched_status['主力/籌碼欄位'] = "✅ 已成功偵測並自動導回主看板"
             
             # 處理日期分切邏輯
             if '日期' in df.columns:
@@ -104,12 +100,6 @@ if os.path.exists(CSV_FILE):
                 # 若最大值大於 50 萬，代表原始單位為「股」，自動換算為「張」
                 if df_today['成交量'].max() > 500000:
                     df_today['成交量'] = (df_today['成交量'] / 1000).round(0)
-            
-            # 確保所有籌碼與支撐欄位在轉換時不因千分位逗號變成 NaN
-            for col in df_today.columns:
-                if any(k in col for k in ['支撐', '買賣超', '主力', '外資', '投信', '壓力']):
-                    if df_today[col].dtype == object:
-                        df_today[col] = safe_to_numeric(df_today[col])
         else:
             app_error = "資料庫檔案 (stock_data.csv) 目前是空的"
     except Exception as e:
@@ -125,7 +115,9 @@ st.sidebar.header("🎯 策略篩選控制台")
 st.sidebar.subheader("🛡️ 1. 基礎過濾條件")
 filter_ordinary = st.sidebar.checkbox("僅限上市櫃普通股 (4/6碼)", value=True)
 min_price = st.sidebar.number_input("最低股價門檻 (元)", min_value=0.0, value=10.0, step=1.0)
-min_volume = st.sidebar.number_input("最低成交量門檻 (張)", min_value=0, value=1000, step=100)
+
+# 【核心修正】將成交量門檻預設值改為 0，防止成功對齊後因預設 1000 導致股票變 0 檔
+min_volume = st.sidebar.number_input("最低成交量門檻 (張)", min_value=0, value=0, step=100)
 
 st.sidebar.subheader("📈 2. 核心選股策略")
 strategy_option = st.sidebar.selectbox(
@@ -199,27 +191,15 @@ if not app_error and not df_today.empty:
         if '回檔%' in working_df.columns:
             working_df = working_df[working_df['回檔%'] <= max_back_pct]
     
-    # C. 【核心改動】動態建構最終要顯示的看板欄位，確保絕對不漏掉任何籌碼或支撐資訊
-    base_cols = ['代號', '名稱', '產業', '股價', '今日漲幅%', '成交量']
-    optional_keywords = ['支撐', '主力', '外資', '投信', '自營', '籌碼', '回檔']
+    # C. 【核心優化】全自動無損輸出：建立理想排序，並保留所有既有欄位（主力支撐、籌碼等）
+    ideal_order = ['代號', '名稱', '產業', '股價', '今日漲幅%', '成交量', '回檔%', '主力支撐/籌碼判定', '主力籌碼比%']
     
-    expected_cols = []
-    # 1. 先加入現有的基礎欄位
-    for col in base_cols:
-        if col in working_df.columns:
-            expected_cols.append(col)
-            
-    # 2. 自動將 CSV 中含有「主力、支撐、外資、投信」等關鍵字的其餘現有欄位動態加進看板
+    expected_cols = [col for col in ideal_order if col in working_df.columns]
+    # 將剩餘 CSV 中有出現但沒在理想排序裡的其餘欄位也全部追加進去，絕不遮蔽任何資料
     for col in working_df.columns:
-        if col not in expected_cols and any(k in col for k in optional_keywords):
+        if col not in expected_cols and col != '日期':
             expected_cols.append(col)
             
-    # 3. 如果必備基礎欄位缺失，進行補底安全防護
-    for col in base_cols:
-        if col not in expected_cols:
-            working_df[col] = "無資料" if col in ['名稱', '產業'] else 0.0
-            expected_cols.append(col)
-    
     final_df = working_df[expected_cols].copy()
 
 # =========================================================================
