@@ -16,39 +16,65 @@ display_date_str = "讀取中..."
 app_error = None
 df_today = pd.DataFrame()
 raw_csv_columns = []
+matched_status = {}
 
 # =========================================================================
-# 【核心數據防禦】全面擴充模糊匹配，相容 OpenData 與各式爬蟲欄位
+# 【後台核心數據清洗防禦】徹底解決千分位逗號、特殊符號干擾導致補零的問題
 # =========================================================================
+def safe_to_numeric(series):
+    """安全轉換數值函數：自動剔除千分位逗號與百分比符號，防止 Pandas 轉型失敗補零"""
+    if series.empty:
+        return series
+    # 轉為字串並移除逗號、百分比及前後空白
+    s = series.astype(str).str.replace(',', '', regex=False).str.replace('%', '', regex=False).str.strip()
+    # 將台股常見的停牌或無交易符號 '--' 替換為 '0'
+    s = s.replace(['--', '---', 'null', 'None', 'nan', 'NaN', ''], '0')
+    return pd.to_numeric(s, errors='coerce').fillna(0.0)
+
 if os.path.exists(CSV_FILE):
     try:
         df = pd.read_csv(CSV_FILE)
         if not df.empty:
-            # 清洗欄位前後空白並記錄原始欄位，供前端診斷
+            # 清洗原始欄位前後空白
             df.columns = [str(c).strip() for c in df.columns]
             raw_csv_columns = list(df.columns)
             
-            # 建立超級欄位對照表 (相容開盤、收盤、證交所 OpenData 格式)
+            # 第一階段：標準核心欄位英漢對照表
             column_mapping = {
                 'date': '日期', '年月日': '日期', '交易日期': '日期',
                 'code': '代號', 'stock_id': '代號', 'stock_no': '代號', '證券代號': '代號', '股票代號': '代號',
                 'name': '名稱', '證券名稱': '名稱', '股票名稱': '名稱',
                 'industry': '產業', '產業別': '產業',
-                'close': '股價', '收盤價': '股價', 'closingprice': '股價', '當盤關閉': '股價',
+                'close': '股價', '收盤價': '股價', 'closingprice': '股價', '當盤關閉': '股價', '價格': '股價',
                 'change_percent': '今日漲幅%', '漲跌幅': '今日漲幅%', '漲幅': '今日漲幅%', '漲跌百分比': '今日漲幅%',
                 'back_percent': '回檔%', '回檔': '回檔%', 
-                'volume': '成交量', '成交量': '成交量', 'tradevolume': '成交量', '成交股數': '成交量'
+                'volume': '成交量', '成交量': '成交量', 'tradevolume': '成交量', '成交股數': '成交量', '張數': '成交量'
             }
             
-            # 進行轉換 (轉小寫比對加速匹配)
             new_cols = [column_mapping.get(col.lower(), column_mapping.get(col, col)) for col in df.columns]
             df.columns = new_cols
             
-            # 安全防護：如果第一欄沒對齊到且是代號(如9958)，強行歸位給「代號」
+            # 第二階段：智能特徵兜底探測（若第一階段沒對齊成功，則根據關鍵字強制捕捉）
+            for col in df.columns:
+                c_lower = col.lower()
+                if '股價' not in df.columns and ('close' in c_lower or 'price' in c_lower or '收盤' in col) and not any(k in col for k in ['開盤', '最高', '最低']):
+                    df.rename(columns={col: '股價'}, inplace=True)
+                if '代號' not in df.columns and (any(k in c_lower for k in ['code', 'stock_id', 'stock_no']) or any(k in col for k in ['代號', '碼'])):
+                    df.rename(columns={col: '代號'}, inplace=True)
+                if '成交量' not in df.columns and (any(k in c_lower for k in ['volume', 'amount', 'qty']) or any(k in col for k in ['成交量', '股數', '張數'])):
+                    df.rename(columns={col: '成交量'}, inplace=True)
+                if '今日漲幅%' not in df.columns and (any(k in c_lower for k in ['change', 'diff', 'ratio']) or any(k in col for k in ['漲跌', '漲幅', '幅度'])):
+                    df.rename(columns={col: '今日漲幅%'}, inplace=True)
+
+            # 如果連第一欄都沒對齊到，且其內容多為 4 碼數字，默認歸位給「代號」
             if '代號' not in df.columns and len(df.columns) > 0:
                 df.rename(columns={df.columns[0]: '代號'}, inplace=True)
             
-            # 處理日期與當日數據切片
+            # 紀錄最終配對狀態供前端即時診斷
+            for target in ['代號', '名稱', '股價', '成交量', '今日漲幅%']:
+                matched_status[target] = "✅ 已成功對齊" if target in df.columns else "❌ 未找到對應欄位"
+            
+            # 處理日期分切邏輯
             if '日期' in df.columns:
                 df['日期'] = df['日期'].astype(str)
                 latest_date = df['日期'].max()
@@ -59,19 +85,19 @@ if os.path.exists(CSV_FILE):
                 display_date_str = datetime.datetime.fromtimestamp(file_mtime).strftime('%Y%m%d')
                 df_today = df.copy()
             
-            # 數據格式標準化與單位校正
+            # 進階清洗與強健化轉換（呼叫安全轉換器）
             if '代號' in df_today.columns:
                 df_today['代號'] = df_today['代號'].astype(str).str.split('.').str[0].str.strip()
             if '股價' in df_today.columns:
-                df_today['股價'] = pd.to_numeric(df_today['股價'], errors='coerce').fillna(0.0)
+                df_today['股價'] = safe_to_numeric(df_today['股價'])
             if '今日漲幅%' in df_today.columns:
-                df_today['今日漲幅%'] = pd.to_numeric(df_today['今日漲幅%'], errors='coerce').fillna(0.0)
+                df_today['今日漲幅%'] = safe_to_numeric(df_today['今日漲幅%'])
             if '回檔%' in df_today.columns:
-                df_today['回檔%'] = pd.to_numeric(df_today['回檔%'], errors='coerce').fillna(0.0)
+                df_today['回檔%'] = safe_to_numeric(df_today['回檔%'])
                 
             if '成交量' in df_today.columns:
-                df_today['成交量'] = pd.to_numeric(df_today['成交量'], errors='coerce').fillna(0)
-                # 單位自動校正：如果最大成交量大於 10 萬，代表原始單位是「股」而不是「張」，自動除以 1000
+                df_today['成交量'] = safe_to_numeric(df_today['成交量'])
+                # 單位過大自動校正（若最大值 > 10萬，代表原始單位為「股」，自動換算為使用者要求的「張」）
                 if df_today['成交量'].max() > 100000:
                     df_today['成交量'] = df_today['成交量'] / 1000
         else:
@@ -82,7 +108,7 @@ else:
     app_error = "找不到資料庫檔案 (stock_data.csv)"
 
 # =========================================================================
-# 【版面配置】左側策略控制台 (Sidebar) 結構絕對固定
+# 【版面配置】左側策略控制台 (Sidebar) 結構與佈局絕對固定
 # =========================================================================
 st.sidebar.header("🎯 策略篩選控制台")
 
@@ -105,11 +131,13 @@ if strategy_option == "精選回檔策略":
 # 3. 系統後台診斷報告區（主畫面頂部，隔離保護）
 # =========================================================================
 with st.expander("🔍 系統後台資料連線診斷報告 (點擊展開)", expanded=True):
-    # 增加原始欄位透明化顯示，方便對齊
     if raw_csv_columns:
-        st.markdown(f"📊 **目前 CSV 偵測到的原始欄位名稱：** `{raw_csv_columns}`")
+        st.markdown(f"📋 **CSV 原始欄位：** `{raw_csv_columns}`")
+        # 印出對齊詳情，方便除錯
+        status_line = " | ".join([f"{k}: {v}" for k, v in matched_status.items()])
+        st.markdown(f"⚙️ **欄位對齊診斷：** {status_line}")
     else:
-        st.markdown("📊 **目前 CSV 偵測到的原始欄位名稱：** `未成功讀取欄位`")
+        st.markdown("📋 **CSV 原始欄位：** `未成功讀取`")
         
     if app_error and "找不到資料庫" in app_error:
         st.markdown(
@@ -137,7 +165,7 @@ with st.expander("🔍 系統後台資料連線診斷報告 (點擊展開)", exp
         )
 
 # =========================================================================
-# 4. 背景安全執行篩選邏輯
+# 4. 背景安全執行篩選邏輯（不干擾前端 UI 渲染）
 # =========================================================================
 final_df = pd.DataFrame()
 
@@ -149,11 +177,11 @@ if not app_error and not df_today.empty:
     if filter_ordinary and '代號' in working_df.columns:
         working_df = working_df[working_df['代號'].str.len().isin([4, 6]) & working_df['代號'].str.isdigit()]
         
-    # 2. 價格門檻 (唯有當欄位確實存在且成功對齊時才進行過濾)
+    # 2. 價格門檻過濾（僅在股價成功對齊且有數據時啟動）
     if '股價' in working_df.columns and working_df['股價'].max() > 0:
         working_df = working_df[working_df['股價'] >= min_price]
         
-    # 3. 流動性過濾 (唯有當欄位確實存在且成功對齊時才進行過濾)
+    # 3. 流動性過濾（僅在成交量成功對齊且有數據時啟動）
     if '成交量' in working_df.columns and working_df['成交量'].max() > 0:
         working_df = working_df[working_df['成交量'] >= min_volume]
         
