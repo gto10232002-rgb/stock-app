@@ -209,17 +209,18 @@ try:
         st.sidebar.markdown("---")
 
         with st.sidebar.form(key="filter_form"):
-            st.header("🎯 細部參數 (僅自訂模式生效)")
             
-            min_p = st.select_slider("最低股價", options=[0.0, 10.0, 20.0, 30.0, 50.0, 100.0, 200.0, 300.0, 500.0], value=20.0)
-            max_p = st.select_slider("最高股價", options=[50.0, 100.0, 150.0, 200.0, 300.0, 400.0, 500.0, 1000.0, 2000.0, 9999.0], value=500.0)
-            min_v = st.select_slider("最低成交量(張)", options=[0, 100, 500, 1000, 2000, 3000, 5000, 10000], value=1000)
-            
-            # 本益比區間雙頭滑桿
-            pe_range = st.slider("本益比合理區間", min_value=0.0, max_value=100.0, value=(8.0, 20.0), step=1.0)
-            
-            with st.expander("📂 點擊展開：篩選特定產業", expanded=False):
-                target_industry = st.radio("選擇產業", options=["全部"] + sorted(list(df['industry'].unique())), index=0)
+            # 🌟【優化亮點】將細部參數全部折疊隱藏，預設為 False，防止滑動誤觸
+            with st.expander("⚙️ 點擊展開：細部參數微調 (僅自訂模式生效)", expanded=False):
+                min_p = st.select_slider("最低股價", options=[0.0, 10.0, 20.0, 30.0, 50.0, 100.0, 200.0, 300.0, 500.0], value=20.0)
+                max_p = st.select_slider("最高股價", options=[50.0, 100.0, 150.0, 200.0, 300.0, 400.0, 500.0, 1000.0, 2000.0, 9999.0], value=500.0)
+                min_v = st.select_slider("最低成交量(張)", options=[0, 100, 500, 1000, 2000, 3000, 5000, 10000], value=1000)
+                
+                # 本益比區間雙頭滑桿
+                pe_range = st.slider("本益比合理區間", min_value=0.0, max_value=100.0, value=(8.0, 20.0), step=1.0)
+                
+                with st.expander("📂 點擊展開：篩選特定產業", expanded=False):
+                    target_industry = st.radio("選擇產業", options=["全部"] + sorted(list(df['industry'].unique())), index=0)
             
             st.header("🧠 進階策略加選")
             strategy_mode = st.radio("選擇進階策略模式", options=["不加選", "開啟「回檔策略」", "開啟「近期強勢群組」"], index=0)
@@ -241,6 +242,7 @@ try:
             max_p = 9999.0
             min_v = 1000
             strategy_mode = "不加選"
+            target_industry = "全部"
         elif "強勢飆股" in quick_mode:
             pe_range = (0.0, 100.0)
             min_p = 10.0
@@ -248,6 +250,7 @@ try:
             min_v = 3000
             strategy_mode = "開啟「近期強勢群組」"
             min_change = 5
+            target_industry = "全部"
         elif "主力洗盤" in quick_mode:
             pe_range = (8.0, 30.0)
             min_p = 20.0
@@ -257,6 +260,7 @@ try:
             support_mode = "波段洗刷接貨型"
             min_dd = 8
             dynamic_threshold = True
+            target_industry = "全部"
 
         # 設定布林值供過濾使用
         enable_drawdown = (strategy_mode == "開啟「回檔策略」")
@@ -265,7 +269,7 @@ try:
         # 資料過濾處理
         res = df[(df['price'] >= min_p) & (df['price'] <= max_p) & (df['vol'] >= min_v)].copy()
         
-        # 修正：區間過濾邏輯
+        # 區間過濾邏輯
         res['pe_numeric'] = pd.to_numeric(res['pe'], errors='coerce')
         res = res[(res['pe_numeric'] >= pe_range[0]) & (res['pe_numeric'] <= pe_range[1])]
         res = res.drop(columns=['pe_numeric'])
