@@ -378,8 +378,11 @@ try:
                           display_df['名稱'].astype(str).str.contains(search_query, case=False, na=False)
             display_df = display_df[search_mask]
         
-        # 顯示當前啟用的策略名稱
-        display_strategy_name = quick_mode.split(" ")[1] if "自訂" not in quick_mode else "自訂手動篩選"
+        # 🌟【修正後的策略名稱顯示邏輯】完美顯示全名
+        if "自訂" in quick_mode:
+            display_strategy_name = "自訂手動篩選"
+        else:
+            display_strategy_name = quick_mode.split("(")[0].strip()
         
         is_advanced_strategy_active = enable_drawdown or enable_strong
         info_markdown = ""
