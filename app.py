@@ -141,11 +141,6 @@ def get_stock_base_data_v6():
 # ⚡ 高速多執行緒獲取技術指標
 # ==========================================
 def get_single_stock_tech(c):
-    """
-    修改點：捨棄容易報錯的 yf.download()，
-    改用更穩定的 yf.Ticker().history() 來獲取技術資料。
-    徹底解決 MultiIndex 與 'unhashable type: Index' 錯誤。
-    """
     tk = f"{str(c).strip()}.TW"
     dd, chg = 0.0, 0.0
     try:
@@ -199,14 +194,16 @@ try:
     if df.empty:
         st.warning("📅 暫時無法從證交所取得完整即時資料。請確認網路連線或是否為非交易時間。")
     else:
-        # 📌 保持不變：左側穩定型控制元件（無任何輸入框，100%防止跳動）
+        # 📌 左側控制列
         with st.sidebar.form(key="filter_form"):
             st.header("🎯 基礎篩選條件")
             
             min_p = st.select_slider("最低股價", options=[0.0, 10.0, 20.0, 30.0, 50.0, 100.0, 200.0, 300.0, 500.0], value=0.0)
             max_p = st.select_slider("最高股價", options=[50.0, 100.0, 150.0, 200.0, 300.0, 400.0, 500.0, 1000.0, 2000.0, 9999.0], value=500.0)
             min_v = st.select_slider("最低成交量(張)", options=[0, 100, 500, 1000, 2000, 3000, 5000, 10000], value=1000)
-            max_pe = st.select_slider("最高本益比", options=[0.0, 10.0, 15.0, 20.0, 25.0, 30.0, 40.0, 50.0, 100.0], value=30.0, format_func=lambda x: "不限" if x == 0.0 else f"{x}")
+            
+            # 修改點：更換為「最低本益比」，預設值設為 0.0 (不限)
+            min_pe = st.select_slider("最低本益比", options=[0.0, 5.0, 10.0, 12.0, 15.0, 20.0, 25.0, 30.0, 40.0, 50.0], value=0.0, format_func=lambda x: "不限" if x == 0.0 else f"{x}")
             
             with st.expander("📂 點擊展開：篩選特定產業", expanded=False):
                 target_industry = st.radio("選擇產業", options=["全部"] + sorted(list(df['industry'].unique())), index=0)
@@ -227,8 +224,13 @@ try:
         
         # 資料過濾處理
         res = df[(df['price'] >= min_p) & (df['price'] <= max_p) & (df['vol'] >= min_v)].copy()
-        if max_pe > 0:
-            res = res[((res['pe'] > 0) & (res['pe'] <= max_pe)).fillna(False)]
+        
+        # 修改點：修正本益比過濾邏輯，改為「大於等於最低本益比」並嚴謹處理轉型與缺失值
+        res['pe_numeric'] = pd.to_numeric(res['pe'], errors='coerce')
+        if min_pe > 0:
+            res = res[(res['pe_numeric'] >= min_pe)]
+        res = res.drop(columns=['pe_numeric'])
+        
         if target_industry != "全部":
             res = res[res['industry'] == target_industry]
             
@@ -324,8 +326,7 @@ try:
             'chip_ratio': '集中度%', 'pe': '本益比', 'value_billion': '成交額(億)'
         })
         
-        # 🌟【全新功能：穩定版個股搜尋框】🌟
-        # 置於中央主畫面最上方，100% 避免手機側邊欄重繪與縮放 Bug
+        # 🌟【穩定版個股搜尋框】
         search_query = st.text_input(
             "🔍 個股快速搜尋 (支援輸入股票代號或中文名稱)", 
             value="", 
