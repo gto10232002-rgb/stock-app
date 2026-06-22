@@ -194,16 +194,29 @@ try:
     if df.empty:
         st.warning("📅 暫時無法從證交所取得完整即時資料。請確認網路連線或是否為非交易時間。")
     else:
-        # 📌 左側控制列
+        # 📌 左側控制列 - 一鍵模組
+        st.sidebar.header("⚡ 快速選股模組")
+        quick_mode = st.sidebar.selectbox(
+            "一鍵套用策略 (優先級最高)", 
+            options=[
+                "🛠️ 自訂手動篩選 (使用下方參數)", 
+                "🛡️ 1. 穩健價值標的 (低基期/合理PE)", 
+                "🚀 2. 尋找強勢飆股 (動能突破)", 
+                "🕵️ 3. 主力洗盤吃貨 (左側潛伏)"
+            ],
+            index=0
+        )
+        st.sidebar.markdown("---")
+
         with st.sidebar.form(key="filter_form"):
-            st.header("🎯 基礎篩選條件")
+            st.header("🎯 細部參數 (僅自訂模式生效)")
             
-            min_p = st.select_slider("最低股價", options=[0.0, 10.0, 20.0, 30.0, 50.0, 100.0, 200.0, 300.0, 500.0], value=0.0)
+            min_p = st.select_slider("最低股價", options=[0.0, 10.0, 20.0, 30.0, 50.0, 100.0, 200.0, 300.0, 500.0], value=20.0)
             max_p = st.select_slider("最高股價", options=[50.0, 100.0, 150.0, 200.0, 300.0, 400.0, 500.0, 1000.0, 2000.0, 9999.0], value=500.0)
             min_v = st.select_slider("最低成交量(張)", options=[0, 100, 500, 1000, 2000, 3000, 5000, 10000], value=1000)
             
-            # 修改點：更換為「最低本益比」，預設值設為 0.0 (不限)
-            min_pe = st.select_slider("最低本益比", options=[0.0, 5.0, 10.0, 12.0, 15.0, 20.0, 25.0, 30.0, 40.0, 50.0], value=0.0, format_func=lambda x: "不限" if x == 0.0 else f"{x}")
+            # 本益比區間雙頭滑桿
+            pe_range = st.slider("本益比合理區間", min_value=0.0, max_value=100.0, value=(8.0, 20.0), step=1.0)
             
             with st.expander("📂 點擊展開：篩選特定產業", expanded=False):
                 target_industry = st.radio("選擇產業", options=["全部"] + sorted(list(df['industry'].unique())), index=0)
@@ -211,24 +224,50 @@ try:
             st.header("🧠 進階策略加選")
             strategy_mode = st.radio("選擇進階策略模式", options=["不加選", "開啟「回檔策略」", "開啟「近期強勢群組」"], index=0)
             
-            enable_drawdown = (strategy_mode == "開啟「回檔策略」")
-            enable_strong = (strategy_mode == "開啟「近期強勢群組」")
-            
             support_mode = st.radio("└ 籌碼支撐型態 (僅回檔策略有效)", options=["全部符合", "單日爆發強勢型", "波段洗刷接貨型"], index=0)
             dynamic_threshold = st.checkbox("└ 啟用股本規模動態門檻調整 (僅回檔策略有效)", value=True)
             
             min_dd = st.select_slider("└ 最低回檔幅度(%) (僅回檔策略有效)", options=[0, 3, 5, 8, 10, 15, 20, 25, 30, 40, 50], value=5)
             min_change = st.select_slider("└ 最低今日漲幅(%) (僅近期強勢群組有效)", options=[-10, -5, -3, -1, 0, 1, 2, 3, 5, 7, 10], value=5)
             
-            submit_button = st.form_submit_button(label="🚀 套用篩選條件")
+            submit_button = st.form_submit_button(label="🚀 執行分析")
+
+        # ==========================================
+        # 🧠 核心邏輯：一鍵策略覆蓋機制
+        # ==========================================
+        if "穩健價值" in quick_mode:
+            pe_range = (8.0, 20.0)
+            min_p = 20.0
+            max_p = 9999.0
+            min_v = 1000
+            strategy_mode = "不加選"
+        elif "強勢飆股" in quick_mode:
+            pe_range = (0.0, 100.0)
+            min_p = 10.0
+            max_p = 9999.0
+            min_v = 3000
+            strategy_mode = "開啟「近期強勢群組」"
+            min_change = 5
+        elif "主力洗盤" in quick_mode:
+            pe_range = (8.0, 30.0)
+            min_p = 20.0
+            max_p = 9999.0
+            min_v = 1000
+            strategy_mode = "開啟「回檔策略」"
+            support_mode = "波段洗刷接貨型"
+            min_dd = 8
+            dynamic_threshold = True
+
+        # 設定布林值供過濾使用
+        enable_drawdown = (strategy_mode == "開啟「回檔策略」")
+        enable_strong = (strategy_mode == "開啟「近期強勢群組」")
         
         # 資料過濾處理
         res = df[(df['price'] >= min_p) & (df['price'] <= max_p) & (df['vol'] >= min_v)].copy()
         
-        # 修改點：修正本益比過濾邏輯，改為「大於等於最低本益比」並嚴謹處理轉型與缺失值
+        # 修正：區間過濾邏輯
         res['pe_numeric'] = pd.to_numeric(res['pe'], errors='coerce')
-        if min_pe > 0:
-            res = res[(res['pe_numeric'] >= min_pe)]
+        res = res[(res['pe_numeric'] >= pe_range[0]) & (res['pe_numeric'] <= pe_range[1])]
         res = res.drop(columns=['pe_numeric'])
         
         if target_industry != "全部":
@@ -339,13 +378,9 @@ try:
                           display_df['名稱'].astype(str).str.contains(search_query, case=False, na=False)
             display_df = display_df[search_mask]
         
-        if enable_drawdown:
-            strategy_text = "回檔策略"
-        elif enable_strong:
-            strategy_text = "近期強勢群組"
-        else:
-            strategy_text = "純基礎條件"
-            
+        # 顯示當前啟用的策略名稱
+        display_strategy_name = quick_mode.split(" ")[1] if "自訂" not in quick_mode else "自訂手動篩選"
+        
         is_advanced_strategy_active = enable_drawdown or enable_strong
         info_markdown = ""
         
@@ -359,17 +394,17 @@ try:
                 
                 if filtered_ind:
                     ind_lines = "\n".join([f"* {item}" for item in filtered_ind])
-                    info_markdown = f"🎯 當前過濾組合：【{strategy_text}】\n\n**最終符合條件：{total_count} 檔**\n\n{ind_lines}"
+                    info_markdown = f"🎯 當前過濾組合：【{display_strategy_name}】\n\n**最終符合條件：{total_count} 檔**\n\n{ind_lines}"
                 else:
-                    info_markdown = f"🎯 當前過濾組合：【{strategy_text}】\n\n**最終符合條件：{total_count} 檔**\n\n* （目前沒有3檔以上共同產業的主力出現）"
+                    info_markdown = f"🎯 當前過濾組合：【{display_strategy_name}】\n\n**最終符合條件：{total_count} 檔**\n\n* （目前沒有3檔以上共同產業的主力出現）"
             else:
-                info_markdown = f"🎯 當前過濾組合：【{strategy_text}】\n\n**最終符合條件：{total_count} 檔**"
+                info_markdown = f"🎯 當前過濾組合：【{display_strategy_name}】\n\n**最終符合條件：{total_count} 檔**"
         else:
             current_df = pd.DataFrame(columns=['代號', '名稱', '產業', '今日漲幅%', '股價', '回檔%', '集中度%', '支撐力道', '成交額(億)', '本益比', 'K線連結'])
             if is_advanced_strategy_active:
-                info_markdown = f"🎯 當前過濾組合：【{strategy_text}】\n\n**最終符合條件：0 檔**\n\n* （目前沒有3檔以上共同產業的主力出現）"
+                info_markdown = f"🎯 當前過濾組合：【{display_strategy_name}】\n\n**最終符合條件：0 檔**\n\n* （目前沒有3檔以上共同產業的主力出現）"
             else:
-                info_markdown = f"🎯 當前過濾組合：【{strategy_text}】\n\n**最終符合條件：0 檔**"
+                info_markdown = f"🎯 當前過濾組合：【{display_strategy_name}】\n\n**最終符合條件：0 檔**"
 
         st.info(info_markdown)
         
