@@ -25,7 +25,7 @@ st.caption("📌 關盤資訊會在每日 18:30 之後導入")
 # 2. 獲取台股基礎資料 (證交所 Open API)
 # ==========================================
 @st.cache_data(ttl=3600)
-def get_stock_base_data_v9():
+def get_stock_base_data_v10():
     cols = ['code', 'name', 'price', 'vol', 'trade_value', 'pe', 'industry', 'chip_ratio', 'value_billion']
     empty_df = pd.DataFrame(columns=cols)
 
@@ -122,16 +122,17 @@ def get_stock_base_data_v9():
     return df[cols]
 
 # ==========================================
-# ⚡ 【核心修正】技術指標安全獲取函式
+# ⚡ 【精確防破壞】技術指標安全獲取
 # ==========================================
-def get_single_stock_tech_safe(c):
+def get_single_stock_tech_perfect(c):
     tk = f"{str(c).strip()}.TW"
-    dd, chg = 0.0, 0.0
+    # 使用 None 做為初始狀態，精準排除抓取失敗的殭屍股
+    dd, chg = None, None
     try:
         stock = yf.Ticker(tk)
         hist = stock.history(period="1mo")
         if not hist.empty:
-            # 💡 關鍵安全防護：將潛在的 MultiIndex 欄位扁平化，確保能精準取值
+            # 💡 保障多層 MultiIndex Columns 扁平化取值安全
             if isinstance(hist.columns, pd.MultiIndex):
                 hist.columns = [col[0] for col in hist.columns]
             
@@ -156,11 +157,16 @@ def batch_append_tech_indicators(res_df):
     codes = res_df['code'].tolist()
     dd_map, chg_map = {}, {}
     with concurrent.futures.ThreadPoolExecutor(max_workers=10) as executor:
-        results = executor.map(get_single_stock_tech_safe, codes)
+        results = executor.map(get_single_stock_tech_perfect, codes)
     for c, dd, chg in results:
         dd_map[c], chg_map[c] = dd, chg
-    res_df['回檔%'] = res_df['code'].map(dd_map).fillna(0.0)
-    res_df['今日漲幅%'] = res_df['code'].map(chg_map).fillna(0.0)
+    
+    # 對齊數據回大盤池中
+    res_df['回檔%'] = res_df['code'].map(dd_map)
+    res_df['今日漲幅%'] = res_df['code'].map(chg_map)
+    
+    # 🌟【防錯核心】自動剔除所有 yfinance 抓取失敗(為 None)的異常個股，防止前端渲染崩潰
+    res_df = res_df.dropna(subset=['回檔%', '今日漲幅%']).copy()
     return res_df
 
 # ==========================================
@@ -168,7 +174,7 @@ def batch_append_tech_indicators(res_df):
 # ==========================================
 try:
     with st.spinner("正在同步全台股籌碼與盤後數據..."):
-        df_base = get_stock_base_data_v9()
+        df_base = get_stock_base_data_v10()
     
     if df_base.empty:
         st.warning("📅 暫時無法取得證交所資料。")
@@ -192,7 +198,7 @@ try:
         if target_industry != "全部":
             df_pool = df_pool[df_pool['industry'] == target_industry]
 
-        # 批次計算技術指標
+        # 批次計算與防呆過濾
         if not df_pool.empty:
             with st.spinner(f"正在分析 {len(df_pool)} 檔符合流動性標的之即時技術指標..."):
                 df_pool = batch_append_tech_indicators(df_pool)
