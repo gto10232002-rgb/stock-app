@@ -25,7 +25,7 @@ st.caption("📌 關盤資訊會在每日 18:30 之後導入")
 # 2. 獲取台股基礎資料 (證交所 Open API)
 # ==========================================
 @st.cache_data(ttl=3600)
-def get_stock_base_data_v8():
+def get_stock_base_data_v9():
     cols = ['code', 'name', 'price', 'vol', 'trade_value', 'pe', 'industry', 'chip_ratio', 'value_billion']
     empty_df = pd.DataFrame(columns=cols)
 
@@ -122,23 +122,28 @@ def get_stock_base_data_v8():
     return df[cols]
 
 # ==========================================
-# ⚡ 技術指標多執行緒獲取
+# ⚡ 【核心修正】技術指標安全獲取函式
 # ==========================================
-def get_single_stock_tech(c):
+def get_single_stock_tech_safe(c):
     tk = f"{str(c).strip()}.TW"
     dd, chg = 0.0, 0.0
     try:
         stock = yf.Ticker(tk)
         hist = stock.history(period="1mo")
-        if not hist.empty and 'Close' in hist.columns and 'High' in hist.columns:
-            closes = hist['Close'].dropna()
-            highs = hist['High'].dropna()
-            if len(closes) >= 2:
-                h_max = float(highs.max())
-                cur = float(closes.iloc[-1])
-                prev = float(closes.iloc[-2])
-                if h_max > 0: dd = round(((h_max - cur) / h_max) * 100, 2)
-                if prev > 0: chg = round(((cur - prev) / prev) * 100, 2)
+        if not hist.empty:
+            # 💡 關鍵安全防護：將潛在的 MultiIndex 欄位扁平化，確保能精準取值
+            if isinstance(hist.columns, pd.MultiIndex):
+                hist.columns = [col[0] for col in hist.columns]
+            
+            if 'Close' in hist.columns and 'High' in hist.columns:
+                closes = hist['Close'].dropna()
+                highs = hist['High'].dropna()
+                if len(closes) >= 2:
+                    h_max = float(highs.max())
+                    cur = float(closes.iloc[-1])
+                    prev = float(closes.iloc[-2])
+                    if h_max > 0: dd = round(((h_max - cur) / h_max) * 100, 2)
+                    if prev > 0: chg = round(((cur - prev) / prev) * 100, 2)
     except Exception:
         pass
     return c, dd, chg
@@ -151,7 +156,7 @@ def batch_append_tech_indicators(res_df):
     codes = res_df['code'].tolist()
     dd_map, chg_map = {}, {}
     with concurrent.futures.ThreadPoolExecutor(max_workers=10) as executor:
-        results = executor.map(get_single_stock_tech, codes)
+        results = executor.map(get_single_stock_tech_safe, codes)
     for c, dd, chg in results:
         dd_map[c], chg_map[c] = dd, chg
     res_df['回檔%'] = res_df['code'].map(dd_map).fillna(0.0)
@@ -163,7 +168,7 @@ def batch_append_tech_indicators(res_df):
 # ==========================================
 try:
     with st.spinner("正在同步全台股籌碼與盤後數據..."):
-        df_base = get_stock_base_data_v8()
+        df_base = get_stock_base_data_v9()
     
     if df_base.empty:
         st.warning("📅 暫時無法取得證交所資料。")
@@ -201,7 +206,7 @@ try:
             df_pool.loc[df_pool['chip_ratio'] >= 10.0, '支撐力道'] = "🔥 極強支撐"
             df_pool.loc[(df_pool['chip_ratio'] >= 4.0) & (df_pool['chip_ratio'] < 10.0), '支撐力道'] = "✅ 健康買盤"
 
-        # 🌟【完整補回】原本定義的 ETF 歷史資料庫
+        # 🌟【完整對照】原本定義的 ETF 歷史資料庫
         etf_db = {
             "2330": ["0050", "00919", "00929"], "2317": ["0050", "00919", "00929"], 
             "2454": ["0050", "0056", "00878", "00919", "00929", "00940"], "2308": ["0050", "00929"], 
@@ -264,17 +269,17 @@ try:
         # 🧠 策略核心：四大象限並行分流與排序
         # ==========================================
         
-        # 1. 🚀 趨勢強勢股群組 (今日漲幅前茅 + 多頭帶動)
-        df_strong = df_display[df_display['今日漲幅%'] >= 1.5].sort_values(by='今日漲幅%', ascending=False).head(25)
+        # 1. 🚀 趨勢強勢股群組 (今日正報酬前茅 + 多頭帶動)
+        df_strong = df_display[df_display['今日漲幅%'] >= 0.5].sort_values(by='今日漲幅%', ascending=False).head(25)
         
-        # 2. 🛡️ 穩健發展股群組 (合理本益比 8-22 倍 + 依流動性/成交額精選)
+        # 2. 🛡️ 穩健發展股群組 (合理本益比 8-22 倍 + 依成交金額排序)
         df_stable = df_display[(df_display['本益比'] >= 8.0) & (df_display['本益比'] <= 22.0)].sort_values(by='成交額(億)', ascending=False).head(25)
         
         # 3. 🕵️ 主力高支撐股群組 (籌碼高集中度 + 依法人買氣排序)
-        df_chips_high = df_display[df_display['集中度%'] >= 2.5].sort_values(by='集中度%', ascending=False).head(25)
+        df_chips_high = df_display[df_display['集中度%'] >= 2.0].sort_values(by='集中度%', ascending=False).head(25)
         
-        # 4. 📉 回檔進場股群組 (從高點回檔達 4% 以上 + 有籌碼防守)
-        df_drawdown = df_display[(df_display['回檔%'] >= 4.0) & (df_display['集中度%'] >= -1.0)].sort_values(by='回檔%', ascending=False).head(25)
+        # 4. 📉 回檔進場股群組 (從月高點回檔達 3.0% 以上 + 主力無大撤退)
+        df_drawdown = df_display[(df_display['回檔%'] >= 3.0) & (df_display['集中度%'] >= -2.0)].sort_values(by='回檔%', ascending=False).head(25)
 
         # 🌟 頂部搜尋框
         search_query = st.text_input("🔍 全局個股快速定位 (輸入代號或名稱可直接在大盤池中尋找)", placeholder="例如: 2330 或 台積電").strip()
