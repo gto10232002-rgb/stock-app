@@ -134,7 +134,7 @@ def get_stock_base_data_final():
     return df[cols]
 
 # ==========================================
-# 3. 批量高效獲取技術指標
+# 3. 批量高效獲取技術指標 (完美兼容多重索引結構與舊版相容性)
 # ==========================================
 def batch_append_tech_indicators_fast(res_df):
     res_df['回檔%'] = 0.0
@@ -145,29 +145,54 @@ def batch_append_tech_indicators_fast(res_df):
     codes = res_df['code'].tolist()
     dd_map, chg_map = {}, {}
     
-    chunk_size = 50
+    chunk_size = 35
     for chunk_start in range(0, len(codes), chunk_size):
         chunk_codes = codes[chunk_start:chunk_start + chunk_size]
         ticker_list = [f"{str(c).strip()}.TW" for c in chunk_codes]
         
         try:
-            data = yf.download(ticker_list, period="1mo", progress=False, timeout=10, keep_multiindex=True)
+            data = yf.download(ticker_list, period="1mo", progress=False, timeout=15)
             if data.empty:
                 continue
                 
-            if 'Close' in data.columns.levels[0] and 'High' in data.columns.levels[0]:
-                df_close = data['Close']
-                df_high = data['High']
-                
-                for c in chunk_codes:
-                    tk = f"{c}.TW"
-                    if tk in df_close.columns and tk in df_high.columns:
-                        closes = df_close[tk].dropna()
-                        highs = df_high[tk].dropna()
-                        if len(closes) >= 2:
-                            h_max = float(highs.max())
-                            cur = float(closes.iloc[-1])
-                            prev = float(closes.iloc[-2])
+            if isinstance(data.columns, pd.MultiIndex):
+                if 'Close' in data.columns.levels[0] and 'High' in data.columns.levels[0]:
+                    df_close = data['Close']
+                    df_high = data['High']
+                    for c in chunk_codes:
+                        tk = f"{c}.TW"
+                        if tk in df_close.columns and tk in df_high.columns:
+                            closes = df_close[tk].dropna()
+                            highs = df_high[tk].dropna()
+                            if len(closes) >= 2 and len(highs) >= 1:
+                                h_max = float(highs.max())
+                                cur = float(closes.iloc[-1])
+                                prev = float(closes.iloc[-2])
+                                if h_max > 0: dd_map[c] = round(((h_max - cur) / h_max) * 100, 2)
+                                if prev > 0: chg_map[c] = round(((cur - prev) / prev) * 100, 2)
+                else:
+                    for c in chunk_codes:
+                        tk = f"{c}.TW"
+                        if tk in data.columns.levels[0]:
+                            df_tk = data[tk]
+                            if 'Close' in df_tk.columns and 'High' in df_tk.columns:
+                                closes = df_tk['Close'].dropna()
+                                highs = df_tk['High'].dropna()
+                                if len(closes) >= 2 and len(highs) >= 1:
+                                    h_max = float(highs.max())
+                                    cur = float(closes.iloc[-1])
+                                    prev = float(closes.iloc[-2])
+                                    if h_max > 0: dd_map[c] = round(((h_max - cur) / h_max) * 100, 2)
+                                    if prev > 0: chg_map[c] = round(((cur - prev) / prev) * 100, 2)
+            else:
+                if 'Close' in data.columns and 'High' in data.columns:
+                    closes = data['Close'].dropna()
+                    highs = data['High'].dropna()
+                    if len(closes) >= 2 and len(highs) >= 1:
+                        h_max = float(highs.max())
+                        cur = float(closes.iloc[-1])
+                        prev = float(closes.iloc[-2])
+                        for c in chunk_codes:
                             if h_max > 0: dd_map[c] = round(((h_max - cur) / h_max) * 100, 2)
                             if prev > 0: chg_map[c] = round(((cur - prev) / prev) * 100, 2)
         except Exception:
@@ -187,20 +212,17 @@ try:
     if df_base.empty:
         st.warning("📅 暫時無法取得證交所開放資料。")
     else:
-        # 🛠️ 側邊欄配置優化區塊
         with st.sidebar:
             st.header("🎯 選股策略導覽")
             
-            # 1. 策略選取移至側邊欄，開網頁即自動套用預設 index=0 的結果
             selected_strategy = st.radio(
                 "請選擇觀測策略：",
-                ["🚀 1. 趨勢強勢股", "🛡️ 2. 穩健發展股", "🕵️ 3. 主力高支撐股", "📉 4. 回檔進場股"],
+                ["🚀 1. 近期強勢", "🛡️ 2. 穩健長期投資", "🕵️ 3. 主力支撐", "📉 4. 回檔進場股"],
                 index=0
             )
             
             st.markdown("---")
             
-            # 3. 將「篩選大範圍過濾」放入預設關閉(expanded=False)的折疊面板中
             with st.expander("⚙️ 篩選大範圍過濾 (點擊展開)", expanded=False):
                 with st.form(key="filter_form"):
                     min_p = st.slider("最低股價", min_value=0.0, max_value=500.0, value=15.0, step=5.0)
@@ -212,12 +234,10 @@ try:
                     
                     submit_button = st.form_submit_button(label="🚀 套用變更條件")
 
-        # 進行大盤數據過濾
         df_filtered = df_base[(df_base['price'] >= min_p) & (df_base['price'] <= max_p) & (df_base['vol'] >= min_v)].copy()
         if target_industry != "全部":
             df_filtered = df_filtered[df_filtered['industry'] == target_industry]
 
-        # 計算技術指標
         if not df_filtered.empty:
             with st.spinner(f"正在分析 {len(df_filtered)} 檔符合條件標的之即時技術指標..."):
                 df_pool = batch_append_tech_indicators_fast(df_filtered)
@@ -281,16 +301,13 @@ try:
         if not df_pool.empty:
             df_pool['name'] = df_pool.apply(merge_etf_info, axis=1)
 
-        # 欄位重新映射命名
         df_display = df_pool.rename(columns={
             'code': '代號', 'name': '名稱', 'industry': '產業', 'price': '股價', 
             'chip_ratio': '集中度%', 'pe': '本益比', 'value_billion': '成交額(億)'
         })
 
-        # 欄位顯示順序
         cols_order = ['代號', '名稱', '產業', '今日漲幅%', '股價', '回檔%', '集中度%', '支撐力道', '成交額(億)', '本益比', 'K線連結']
 
-        # 分流交叉過濾各策略數據
         if not df_display.empty:
             df_strong = df_display[df_display['今日漲幅%'] >= 0.5].sort_values(by='今日漲幅%', ascending=False).head(25)
             df_stable = df_display[(df_display['本益比'] >= pe_min) & (df_display['本益比'] <= pe_max)].sort_values(by='成交額(億)', ascending=False).head(25)
@@ -302,22 +319,21 @@ try:
             df_chips_high = pd.DataFrame(columns=cols_order)
             df_drawdown = pd.DataFrame(columns=cols_order)
 
-        # 🌟 主畫面：頂部全局快速搜尋框
         search_query = st.text_input("🔍 全局個股快速定位 (輸入代號或名稱可直接在大盤池中尋找)", placeholder="例如: 2330 或 台積電").strip()
         
-        # 表格組態定義（支援滾動與前兩欄 Pin 固定欄位）
+        # 🛠️ 已將名稱欄位精準調整為 115 像素
         grid_config = {
-            "代號": st.column_config.TextColumn("代號", pinned=True),  
-            "名稱": st.column_config.TextColumn("名稱", pinned=True),  
-            "產業": st.column_config.TextColumn("產業"),
-            "今日漲幅%": st.column_config.NumberColumn("今日漲幅%", format="%.2f %%"),
-            "股價": st.column_config.NumberColumn("股價", format="%.2f"),
-            "回檔%": st.column_config.NumberColumn("回檔%", format="%.2f %%"),
-            "集中度%": st.column_config.NumberColumn("集中度%", format="%.2f %%"),
-            "支撐力道": st.column_config.TextColumn("支撐力道"),
-            "成交額(億)": st.column_config.NumberColumn("成交額(億)", format="%.2f 億"),
-            "本益比": st.column_config.NumberColumn("本益比", format="%.2f"),
-            "K線連結": st.column_config.LinkColumn("K線", display_text="📈查看")
+            "代號": st.column_config.TextColumn("代號", pinned=True, width="small"),  
+            "名稱": st.column_config.TextColumn("名稱", pinned=True, width=115),  
+            "產業": st.column_config.TextColumn("產業", width="medium"),
+            "今日漲幅%": st.column_config.NumberColumn("今日漲幅%", format="%.2f %%", width="small"),
+            "股價": st.column_config.NumberColumn("股價", format="%.2f", width="small"),
+            "回檔%": st.column_config.NumberColumn("回檔%", format="%.2f %%", width="small"),
+            "集中度%": st.column_config.NumberColumn("集中度%", format="%.2f %%", width="small"),
+            "支撐力道": st.column_config.TextColumn("支撐力道", width="small"),
+            "成交額(億)": st.column_config.NumberColumn("成交額(億)", format="%.2f 億", width="small"),
+            "本益比": st.column_config.NumberColumn("本益比", format="%.2f", width="small"),
+            "K線連結": st.column_config.LinkColumn("K線", display_text="📈查看", width="small")
         }
 
         if search_query and not df_display.empty:
@@ -327,17 +343,16 @@ try:
             st.dataframe(df_display[search_mask][cols_order], use_container_width=True, hide_index=True, column_config=grid_config)
             st.markdown("---")
 
-        # 2. 🎯 根據左側側邊欄的選取狀態，將結果即時投射渲染在網頁主畫面上
-        if selected_strategy == "🚀 1. 趨勢強勢股":
-            st.subheader("🔥 趨勢強勢標的 (依今日漲幅排序)")
+        if selected_strategy == "🚀 1. 近期強勢":
+            st.subheader("🔥 近期強勢標的 (依今日漲幅排序)")
             st.dataframe(df_strong[cols_order], use_container_width=True, hide_index=True, height=580, column_config=grid_config)
             
-        elif selected_strategy == "🛡️ 2. 穩健發展股":
-            st.subheader("💎 穩健發展標的 (自訂本益比區間精選)")
+        elif selected_strategy == "🛡️ 2. 穩健長期投資":
+            st.subheader("💎 穩健長期投資標的 (自訂本益比區間精選)")
             st.dataframe(df_stable[cols_order], use_container_width=True, hide_index=True, height=580, column_config=grid_config)
             
-        elif selected_strategy == "🕵️ 3. 主力高支撐股":
-            st.subheader("💪 主力籌碼吸貨標的 (依法人集中度排序)")
+        elif selected_strategy == "🕵️ 3. 主力支撐":
+            st.subheader("💪 主力支撐標的 (依法人集中度排序)")
             st.dataframe(df_chips_high[cols_order], use_container_width=True, hide_index=True, height=580, column_config=grid_config)
             
         elif selected_strategy == "📉 4. 回檔進場股":
