@@ -75,31 +75,49 @@ def get_stock_base_data_final():
             res = requests.get(url, headers=headers, timeout=10)
             if res.status_code == 200 and "data" in res.json():
                 js = res.json()
-                df_raw = pd.DataFrame(js["data"], columns=[c.strip() for c in js["fields"]])
-                fi_c = [c for c in df_raw.columns if '外資' in c and '買賣超' in c][0]
-                it_c = [c for c in df_raw.columns if '投信' in c and '買賣超' in c][0]
-                
-                df_chips['code'] = df_raw['證券代號'].astype(str).str.strip()
-                df_chips['fi'] = pd.to_numeric(df_raw[fi_c].str.replace(',', ''), errors='coerce') / 1000
-                df_chips['it'] = pd.to_numeric(df_raw[it_c].str.replace(',', ''), errors='coerce') / 1000
-                break
+                if "fields" in js and "data" in js and js["data"]:
+                    df_raw = pd.DataFrame(js["data"], columns=[c.strip() for c in js["fields"]])
+                    fi_c = [c for c in df_raw.columns if '外資' in c and '買賣超' in c]
+                    it_c = [c for c in df_raw.columns if '投信' in c and '買賣超' in c]
+                    
+                    if fi_c and it_c:
+                        df_chips = pd.DataFrame()
+                        df_chips['code'] = df_raw['證券代號'].astype(str).str.strip()
+                        df_chips['fi'] = pd.to_numeric(df_raw[fi_c[0]].str.replace(',', ''), errors='coerce') / 1000
+                        df_chips['it'] = pd.to_numeric(df_raw[it_c[0]].str.replace(',', ''), errors='coerce') / 1000
+                        break
         except Exception:
             continue
 
-    df = pd.merge(df_price, df_chips, on='code', how='left') if not df_chips.empty else df_price.copy()
-    
-    df['fi'] = pd.to_numeric(df.get('fi', 0.0), errors='coerce').fillna(0.0)
-    df['it'] = pd.to_numeric(df.get('it', 0.0), errors='coerce').fillna(0.0)
-    df['vol'] = pd.to_numeric(df.get('vol', 0.0), errors='coerce').fillna(0.0)
-    df['trade_value'] = pd.to_numeric(df.get('trade_value', 0.0), errors='coerce').fillna(0.0)
+    # 🌟【鐵壁防禦】安全合併，絕不產生常數 float 導致 fillna 崩潰
+    if not df_chips.empty:
+        df = pd.merge(df_price, df_chips, on='code', how='left')
+    else:
+        df = df_price.copy()
+        df['fi'] = 0.0
+        df['it'] = 0.0
+
+    df['fi'] = pd.to_numeric(df['fi'], errors='coerce').fillna(0.0)
+    df['it'] = pd.to_numeric(df['it'], errors='coerce').fillna(0.0)
+    df['vol'] = pd.to_numeric(df['vol'], errors='coerce').fillna(0.0)
+    df['trade_value'] = pd.to_numeric(df['trade_value'], errors='coerce').fillna(0.0)
 
     net_chips = df['fi'] + df['it']
     df['chip_ratio'] = (net_chips / df['vol'].replace(0, pd.NA)).fillna(0.0) * 100
     df['chip_ratio'] = df['chip_ratio'].clip(upper=100.0).round(2)
     df['value_billion'] = (df['trade_value'] / 100000000).fillna(0.0).round(2)
 
-    df = pd.merge(df, df_pe, on='code', how='left') if not df_pe.empty else df.assign(pe=pd.NA)
-    df = pd.merge(df, df_ind, on='code', how='left') if not df_ind.empty else df.assign(industry='其他')
+    if not df_pe.empty:
+        df = pd.merge(df, df_pe, on='code', how='left')
+    if 'pe' not in df.columns:
+        df['pe'] = pd.NA
+
+    if not df_ind.empty:
+        df = pd.merge(df, df_ind, on='code', how='left')
+    if 'industry' not in df.columns:
+        df['industry'] = '其他'
+    else:
+        df['industry'] = df['industry'].fillna('其他')
     
     ind_map = {
         "01": "水泥工業", "02": "食品工業", "03": "塑膠工業", "04": "紡織纖維", "05": "電機機械",
@@ -121,7 +139,7 @@ def get_stock_base_data_final():
     return df[cols]
 
 # ==========================================
-# ⚡ 【關鍵優化】單次大批次下載技術指標 (百分之百防止鎖IP)
+# ⚡ 【分批強化版】單次分組下載技術指標 (完美避開 Yahoo 大批量拒絕)
 # ==========================================
 def batch_append_tech_indicators_fast(res_df):
     res_df['回檔%'] = 0.0
@@ -130,23 +148,26 @@ def batch_append_tech_indicators_fast(res_df):
         return res_df
         
     codes = res_df['code'].tolist()
-    ticker_list = [f"{str(c).strip()}.TW" for c in codes]
+    dd_map = {}
+    chg_map = {}
     
-    try:
-        # 使用單次批量下載，不開執行緒，避免 429 Too Many Requests 錯誤
-        data = yf.download(ticker_list, period="1mo", progress=False)
+    # 採取每 50 檔為一組的分批同步，提升高載量下的下載成功率
+    chunk_size = 50
+    for chunk_start in range(0, len(codes), chunk_size):
+        chunk_codes = codes[chunk_start:chunk_start + chunk_size]
+        ticker_list = [f"{str(c).strip()}.TW" for c in chunk_codes]
         
-        if not data.empty:
-            dd_map = {}
-            chg_map = {}
-            
-            # 處理多個個股下載回傳的 MultiIndex 結構
+        try:
+            data = yf.download(ticker_list, period="1mo", progress=False, timeout=10)
+            if data.empty:
+                continue
+                
             if isinstance(data.columns, pd.MultiIndex):
-                if 'Close' in data.columns.levels[0] and 'High' in data.columns.levels[0]:
+                try:
                     df_close = data['Close']
                     df_high = data['High']
                     
-                    for c in codes:
+                    for c in chunk_codes:
                         tk = f"{c}.TW"
                         if tk in df_close.columns and tk in df_high.columns:
                             closes = df_close[tk].dropna()
@@ -157,24 +178,26 @@ def batch_append_tech_indicators_fast(res_df):
                                 prev = float(closes.iloc[-2])
                                 if h_max > 0: dd_map[c] = round(((h_max - cur) / h_max) * 100, 2)
                                 if prev > 0: chg_map[c] = round(((cur - prev) / prev) * 100, 2)
+                except KeyError:
+                    pass
             else:
-                # 單一股票防呆安全結構
-                if 'Close' in data.columns and 'High' in data.columns:
+                try:
                     closes = data['Close'].dropna()
                     highs = data['High'].dropna()
                     if len(closes) >= 2:
                         h_max = float(highs.max())
                         cur = float(closes.iloc[-1])
                         prev = float(closes.iloc[-2])
-                        c = codes[0]
+                        c = chunk_codes[0]
                         if h_max > 0: dd_map[c] = round(((h_max - cur) / h_max) * 100, 2)
                         if prev > 0: chg_map[c] = round(((cur - prev) / prev) * 100, 2)
-
-            res_df['回檔%'] = res_df['code'].map(dd_map).fillna(0.0)
-            res_df['今日漲幅%'] = res_df['code'].map(chg_map).fillna(0.0)
-    except Exception as e:
-        st.sidebar.warning(f"⚠️ 技術指標同步受限: {e}")
+                except KeyError:
+                    pass
+        except Exception:
+            continue
         
+    res_df['回檔%'] = res_df['code'].map(dd_map).fillna(0.0)
+    res_df['今日漲幅%'] = res_df['code'].map(chg_map).fillna(0.0)
     return res_df
 
 # ==========================================
@@ -193,7 +216,8 @@ try:
         with st.sidebar.form(key="filter_form"):
             # 🌟【優化防誤觸】細部參數嚴格保持折疊隱藏
             with st.expander("🛠️ 點擊展開：基礎流動性門檻", expanded=False):
-                min_p = st.select_slider("最低股價", options=[0.0, 10.0, 20.0, 30.0, 50.0, 100.0, 200.0, 300.0, 500.0], value=15.0)
+                # 🌟【已修正】將 15.0 補入 options 中，徹底解決 Streamlit Slider 預設值死鎖錯誤
+                min_p = st.select_slider("最低股價", options=[0.0, 10.0, 15.0, 20.0, 30.0, 50.0, 100.0, 200.0, 300.0, 500.0], value=15.0)
                 max_p = st.select_slider("最高股價", options=[50.0, 100.0, 150.0, 200.0, 300.0, 400.0, 500.0, 1000.0, 2000.0, 9999.0], value=1000.0)
                 min_v = st.select_slider("最低成交量(張)", options=[0, 100, 300, 500, 1000, 2000, 5000], value=500)
                 target_industry = st.selectbox("選擇指定產業", options=["全部"] + sorted(list(df_base['industry'].unique())), index=0)
@@ -203,8 +227,7 @@ try:
 
         # 🌟【鐵壁欄位宣告網】保證欄位完全存在，徹底消滅 KeyError
         base_cols = df_base.columns.tolist()
-        df_pool = pd.DataFrame(columns=base_cols + ['回檔%', '今日漲幅%', '支撐力道', 'K線連結'])
-
+        
         # 篩選大盤基礎池
         df_filtered = df_base[(df_base['price'] >= min_p) & (df_base['price'] <= max_p) & (df_base['vol'] >= min_v)].copy()
         if target_industry != "全部":
@@ -221,6 +244,8 @@ try:
                 
                 # 產生跳轉連結
                 df_pool['K線連結'] = df_pool['code'].apply(lambda x: f"https://tw.stock.yahoo.com/quote/{x}")
+        else:
+            df_pool = pd.DataFrame(columns=base_cols + ['回檔%', '今日漲幅%', '支撐力道', 'K線連結'])
 
         # 🌟【完整對照】原本定義的 ETF 歷史資料庫
         etf_db = {
@@ -278,6 +303,9 @@ try:
             'chip_ratio': '集中度%', 'pe': '本益比', 'value_billion': '成交額(億)'
         })
 
+        # 強制指定顯示排序結構
+        cols_order = ['代號', '名稱', '產業', '今日漲幅%', '股價', '回檔%', '集中度%', '支撐力道', '成交額(億)', '本益比', 'K線連結']
+
         # ==========================================
         # 🧠 策略核心：四大象限並行分流
         # ==========================================
@@ -287,16 +315,13 @@ try:
             df_chips_high = df_display[df_display['集中度%'] >= 2.0].sort_values(by='集中度%', ascending=False).head(25)
             df_drawdown = df_display[(df_display['回檔%'] >= 3.0) & (df_display['集中度%'] >= -2.0)].sort_values(by='回檔%', ascending=False).head(25)
         else:
-            df_strong = pd.DataFrame(columns=df_display.columns)
-            df_stable = pd.DataFrame(columns=df_display.columns)
-            df_chips_high = pd.DataFrame(columns=df_display.columns)
-            df_drawdown = pd.DataFrame(columns=df_display.columns)
+            df_strong = pd.DataFrame(columns=cols_order)
+            df_stable = pd.DataFrame(columns=cols_order)
+            df_chips_high = pd.DataFrame(columns=cols_order)
+            df_drawdown = pd.DataFrame(columns=cols_order)
 
         # 🌟 頂部搜尋功能
         search_query = st.text_input("🔍 全局個股快速定位 (輸入代號或名稱可直接在大盤池中尋找)", placeholder="例如: 2330 或 台積電").strip()
-        
-        # 強制指定顯示排序結構
-        cols_order = ['代號', '名稱', '產業', '今日漲幅%', '股價', '回檔%', '集中度%', '支撐力道', '成交額(億)', '本益比', 'K線連結']
         
         # 設定通用表格格式組態
         grid_config = {
@@ -317,7 +342,11 @@ try:
             st.markdown("### 🔍 全局搜尋結果")
             search_mask = df_display['代號'].astype(str).str.contains(search_query, case=False, na=False) | \
                           df_display['名稱'].astype(str).str.contains(search_query, case=False, na=False)
-            st.dataframe(df_display[search_mask][cols_order], use_container_width=True, hide_index=True, column_config=grid_config)
+            df_search_res = df_display[search_mask]
+            if not df_search_res.empty:
+                st.dataframe(df_search_res[cols_order], use_container_width=True, hide_index=True, column_config=grid_config)
+            else:
+                st.info("找不到符合關鍵字的個股。")
             st.markdown("---")
 
         # 🌟 用 Tabs 分頁呈現四大策略面板
