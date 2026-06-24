@@ -203,15 +203,22 @@ def batch_append_tech_indicators_fast(res_df):
     return res_df
 
 # ==========================================
-# 產業聚落統計函數 (小於 3 檔不列出)
+# 💡 族群統計函數 (改為 st.columns 橫向並列架構)
 # ==========================================
 def display_industry_cluster_stats(df_target):
     if not df_target.empty and '產業' in df_target.columns:
         ind_counts = df_target['產業'].value_counts()
-        ind_counts = ind_counts[ind_counts >= 3]
+        ind_counts = ind_counts[ind_counts >= 3] # 僅統計大於等於3檔的族群
+        
         if not ind_counts.empty:
-            stats_list = [f"**{ind}** ({count}檔)" for ind, count in ind_counts.items()]
-            st.info(f"🧬 **同產業聚落統計 (≥3檔)：** {' ｜ '.join(stats_list)}")
+            st.markdown("##### 🧬 熱門族群並列統計 (≥3檔)")
+            # 建立動態並列欄位
+            cols = st.columns(len(ind_counts))
+            for idx, (ind, count) in enumerate(ind_counts.items()):
+                with cols[idx]:
+                    # 使用小巧精緻的 info 樣式磚橫向並列
+                    st.info(f"**{ind}** \n`共 {count} 檔標的`")
+            st.write("") # 留空行優化間距
 
 # ==========================================
 # 4. 主程式控制核心
@@ -223,7 +230,7 @@ try:
     if df_base.empty:
         st.warning("📅 暫時無法取得證交所開放資料。")
     else:
-        # 側邊欄改為單純的過濾條件控制區
+        # 側邊欄配置
         with st.sidebar:
             st.header("⚙️ 大範圍過濾條件")
             with st.form(key="filter_form"):
@@ -289,13 +296,6 @@ try:
             "6176": ["00940"], "1513": ["00940"], "2393": ["00940"], "6257": ["00940"]
         }
 
-        def merge_etf_info(row):
-            c = str(row['code']).strip()
-            n = str(row['name']).strip()
-            if c in etf_db: 
-                return f"{n} ({','.join(etf_db[c])})"
-            return n
-
         if not df_pool.empty:
             df_pool['name'] = df_pool.apply(merge_etf_info, axis=1)
 
@@ -304,20 +304,16 @@ try:
             'chip_ratio': '集中度%', 'pe': '本益比', 'value_billion': '成交額(億)'
         })
 
-        # 💡 【核心技術點】：將本益比轉成字串，並把缺失值替換成金融專業破折號 "—"，徹底擊殺 None 蟲！
+        # 完美對抗 None 顯示機制
         df_display['本益比'] = pd.to_numeric(df_display['本益比'], errors='coerce')
-        df_display['本益比原始'] = df_display['本益比'] # 留底供條件過濾使用
+        df_display['本益比原始'] = df_display['本益比'] 
         df_display['本益比'] = df_display['本益比'].apply(lambda x: f"{x:.2f}" if pd.notnull(x) else "—")
 
         cols_order = ['代號', '名稱', '產業', '今日漲幅%', '股價', '回檔%', '集中度%', '支撐力道', '成交額(億)', '本益比', 'K線連結']
 
-        # 建立四個策略對應的數據切片
         if not df_display.empty:
             df_strong = df_display[df_display['今日漲幅%'] >= 0.5].sort_values(by='今日漲幅%', ascending=False).head(25)
-            
-            # 使用未轉成字串前的原始欄位進行合理區間過濾
             df_stable = df_display[(df_display['本益比原始'] >= pe_min) & (df_display['本益比原始'] <= pe_max)].sort_values(by='成交額(億)', ascending=False).head(25)
-            
             df_chips_high = df_display[df_display['集中度%'] >= 2.0].sort_values(by='集中度%', ascending=False).head(25)
             df_drawdown = df_display[(df_display['回檔%'] >= 3.0) & (df_display['集中度%'] >= -2.0)].sort_values(by='回檔%', ascending=False).head(25)
         else:
@@ -327,9 +323,8 @@ try:
             df_drawdown = pd.DataFrame(columns=cols_order)
 
         # 頂部全局搜尋功能
-        search_query = st.text_input("🔍 全局個股快速定位 (輸入代號或名稱可直接在大盤池中尋找)", placeholder="例如: 2330 或 台積電").strip()
+        search_query = st.text_input("🔍 全局個股快速定位", placeholder="例如: 2330 或 台積電").strip()
         
-        # 欄位定義配置 (本益比改為 TextColumn 完美相容字串破折號)
         grid_config = {
             "代號": st.column_config.TextColumn("代號", pinned=True, width="small"),  
             "名稱": st.column_config.TextColumn("名稱", pinned=True, width=115),  
@@ -351,7 +346,7 @@ try:
             st.dataframe(df_display[search_mask][cols_order], use_container_width=True, hide_index=True, column_config=grid_config)
             st.markdown("---")
 
-        # 💡 【橫向並列核心】：使用 st.tabs 將所有策略橫向並列排開
+        # 策略分頁
         tab1, tab2, tab3, tab4 = st.tabs([
             "🚀 1. 近期強勢", 
             "🛡️ 2. 穩健長期投資", 
@@ -361,22 +356,22 @@ try:
 
         with tab1:
             st.subheader("🔥 近期強勢標的 (依今日漲幅排序)")
-            display_industry_cluster_stats(df_strong)
+            display_industry_cluster_stats(df_strong)  # 這裡的統計數據會完美並列！
             st.dataframe(df_strong[cols_order], use_container_width=True, hide_index=True, height=580, column_config=grid_config)
             
         with tab2:
             st.subheader("💎 穩健長期投資標的 (自訂本益比區間精選)")
-            display_industry_cluster_stats(df_stable)
+            display_industry_cluster_stats(df_stable)  # 這裡的統計數據會完美並列！
             st.dataframe(df_stable[cols_order], use_container_width=True, hide_index=True, height=580, column_config=grid_config)
             
         with tab3:
             st.subheader("💪 主力支撐標的 (法人集中度)")
-            display_industry_cluster_stats(df_chips_high)
+            display_industry_cluster_stats(df_chips_high) # 這裡的統計數據會完美並列！
             st.dataframe(df_chips_high[cols_order], use_container_width=True, hide_index=True, height=580, column_config=grid_config)
             
         with tab4:
             st.subheader("🛒 修正回檔潛伏標的 (依高點回檔幅度排序)")
-            display_industry_cluster_stats(df_drawdown)
+            display_industry_cluster_stats(df_drawdown)  # 這裡的統計數據會完美並列！
             st.dataframe(df_drawdown[cols_order], use_container_width=True, hide_index=True, height=580, column_config=grid_config)
 
 except Exception as e:
