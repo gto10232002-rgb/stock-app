@@ -22,7 +22,51 @@ st.markdown("### 📊 台股多元策略選股系統")
 st.caption("📌 關盤資訊會在每日 18:30 之後導入")
 
 # ==========================================
-# 2. 獲取台股基礎資料 (證交所 Open API)
+# 2. 💡 ETF 成分資料庫與名稱合併函數（移至最頂端防止 NameError）
+# ==========================================
+etf_db = {
+    "2330": ["0050", "00919", "00929"], "2317": ["0050", "00919", "00929"], 
+    "2454": ["0050", "0056", "00878", "00919", "00929", "00940"], "2308": ["0050", "00929"], 
+    "3711": ["0050", "0056", "00878", "00919"], "2303": ["0050", "0056", "00878", "00919", "00929", "00940"],
+    "2881": ["0050", "00878", "00919", "00940"], "2882": ["0050", "00878", "00919"], 
+    "2891": ["0050", "0056", "00878", "00919", "00940"], "2382": ["0050", "0056", "00878", "00919", "00940"], 
+    "2886": ["0050", "00878"], "3008": ["0050", "00919", "00929"], "2884": ["0050"], 
+    "2885": ["0050", "00878", "00940"], "2892": ["0050", "00940"], 
+    "2357": ["0050", "0056", "00878", "00919", "00929", "00940"], "3231": ["0050", "0056", "00878", "00929"], 
+    "1216": ["0050", "0056", "00878", "00940"], "2412": ["0050", "00878"], "1301": ["0050"], 
+    "1303": ["0050"], "2603": ["0050", "0056", "00878", "00919", "00940"], "3037": ["0050"],
+    "2301": ["0050", "0056", "00878", "00929"], "4904": ["0050", "00878"], "2327": ["0050", "00919"], 
+    "3045": ["0050", "00878", "00940"], "2408": ["0050"], "2449": ["0050", "0056", "00878"], 
+    "2345": ["0050"], "2395": ["0050"], "2360": ["0050"], "2368": ["0050"], "3017": ["0050"], 
+    "2383": ["0050"], "2207": ["0050"], "6669": ["0050"], "3653": ["0050"], "3661": ["0050"], 
+    "2002": ["0050"], "5880": ["0050"], "2880": ["0050", "0056", "00878"], "2883": ["0050", "00940"],
+    "2890": ["0050", "00940"], "6505": ["0050"], "6919": ["0050"], "7769": ["0050"], 
+    "2059": ["0050"], "2344": ["0050"], "2376": ["0056", "00878"], 
+    "2324": ["0056", "00878", "00919", "00929", "00940"], 
+    "2356": ["0056", "00878", "00940"], "2385": ["0056", "00940"], 
+    "3034": ["0056", "00878", "00919", "00929", "00940"], "3702": ["0056", "00940"],
+    "4938": ["0056", "00929", "00940"], "3293": ["0056", "00878", "00940"], 
+    "2474": ["0056", "00878", "00940"], "3005": ["0056", "00940"], "2379": ["0056", "00878", "00940"], 
+    "2421": ["0056", "00940"], "6414": ["0056", "00940"], "3406": ["0056", "00919", "00940"],
+    "2439": ["0056", "00940"], "6188": ["0056", "00940"], "6285": ["0056", "00940"], 
+    "8016": ["0056", "00940"], "6139": ["0056", "00940"], "5269": ["0056", "00940"], 
+    "6196": ["0056", "00940"], "6239": ["0056", "00919", "00929", "00940"], "4958": ["00878", "00919"], 
+    "1402": ["00878"], "2912": ["00878", "00940"], "2609": ["00919"], "8209": ["00919"],
+    "6488": ["00929", "00940"], "2801": ["00940"], "9904": ["00940"], "1102": ["00940"], 
+    "4915": ["00940"], "2615": ["00940"], "1319": ["00940"], "3706": ["00940"], 
+    "6176": ["00940"], "1513": ["00940"], "2393": ["00940"], "6257": ["00940"]
+}
+
+def merge_etf_info(row):
+    c = str(row['code']).strip()
+    base_name = str(row['name']).strip()
+    if c in etf_db:
+        labels = " ".join([f"[{e}]" for e in etf_db[c]])
+        return f"{base_name} {labels}"
+    return base_name
+
+# ==========================================
+# 3. 獲取台股基礎資料 (證交所 Open API)
 # ==========================================
 @st.cache_data(ttl=3600)
 def get_stock_base_data_final():
@@ -39,9 +83,7 @@ def get_stock_base_data_final():
             df_price['vol'] = pd.to_numeric(df_price['TradeVolume'].str.replace(',', ''), errors='coerce') / 1000
             df_price['trade_value'] = pd.to_numeric(df_price['TradeValue'].str.replace(',', ''), errors='coerce')
             df_price = df_price[['Code', 'Name', 'price', 'vol', 'trade_value']].rename(columns={'Code': 'code', 'Name': 'name'})
-            
-            # 源頭全面封殺所有 91 開頭的存託憑證(TDR)
-            df_price = df_price[~df_price['code'].str.startswith('91')]
+            df_price = df_price[~df_price['code'].str.startswith('91')] # 封殺 TDR
     except Exception as e:
         st.sidebar.error(f"⚠️ 股價API異常: {e}")
 
@@ -94,8 +136,7 @@ def get_stock_base_data_final():
         df = pd.merge(df_price, df_chips, on='code', how='left')
     else:
         df = df_price.copy()
-        df['fi'] = 0.0
-        df['it'] = 0.0
+        df['fi'], df['it'] = 0.0, 0.0
 
     df['fi'] = pd.to_numeric(df['fi'], errors='coerce').fillna(0.0)
     df['it'] = pd.to_numeric(df['it'], errors='coerce').fillna(0.0)
@@ -127,14 +168,13 @@ def get_stock_base_data_final():
         "32": "文化創意業", "33": "農業科技業", "34": "電子商務業", "35": "綠能環保業",
         "36": "數位雲端業", "37": "運動休閒業", "38": "居家生活業", "80": "建材營建"
     }
-    
     df['industry'] = df['industry'].apply(lambda x: str(x).strip()[:-2] if str(x).strip().endswith('.0') else str(x).strip())
     df['industry'] = df['industry'].apply(lambda x: x.zfill(2) if x.isdigit() else x)
     df['industry'] = df['industry'].map(ind_map).fillna(df['industry'])
     return df[cols]
 
 # ==========================================
-# 3. 批量高效獲取技術指標
+# 4. 批量獲取技術指標
 # ==========================================
 def batch_append_tech_indicators_fast(res_df):
     res_df['回檔%'] = 0.0
@@ -157,41 +197,20 @@ def batch_append_tech_indicators_fast(res_df):
                 
             if isinstance(data.columns, pd.MultiIndex):
                 if 'Close' in data.columns.levels[0] and 'High' in data.columns.levels[0]:
-                    df_close = data['Close']
-                    df_high = data['High']
+                    df_close, df_high = data['Close'], data['High']
                     for c in chunk_codes:
                         tk = f"{c}.TW"
                         if tk in df_close.columns and tk in df_high.columns:
-                            closes = df_close[tk].dropna()
-                            highs = df_high[tk].dropna()
+                            closes, highs = df_close[tk].dropna(), df_high[tk].dropna()
                             if len(closes) >= 2 and len(highs) >= 1:
-                                h_max = float(highs.max())
-                                cur = float(closes.iloc[-1])
-                                prev = float(closes.iloc[-2])
+                                h_max, cur, prev = float(highs.max()), float(closes.iloc[-1]), float(closes.iloc[-2])
                                 if h_max > 0: dd_map[c] = round(((h_max - cur) / h_max) * 100, 2)
                                 if prev > 0: chg_map[c] = round(((cur - prev) / prev) * 100, 2)
-                else:
-                    for c in chunk_codes:
-                        tk = f"{c}.TW"
-                        if tk in data.columns.levels[0]:
-                            df_tk = data[tk]
-                            if 'Close' in df_tk.columns and 'High' in df_tk.columns:
-                                closes = df_tk['Close'].dropna()
-                                highs = df_tk['High'].dropna()
-                                if len(closes) >= 2 and len(highs) >= 1:
-                                    h_max = float(highs.max())
-                                    cur = float(closes.iloc[-1])
-                                    prev = float(closes.iloc[-2])
-                                    if h_max > 0: dd_map[c] = round(((h_max - cur) / h_max) * 100, 2)
-                                    if prev > 0: chg_map[c] = round(((cur - prev) / prev) * 100, 2)
             else:
                 if 'Close' in data.columns and 'High' in data.columns:
-                    closes = data['Close'].dropna()
-                    highs = data['High'].dropna()
+                    closes, highs = data['Close'].dropna(), data['High'].dropna()
                     if len(closes) >= 2 and len(highs) >= 1:
-                        h_max = float(highs.max())
-                        cur = float(closes.iloc[-1])
-                        prev = float(closes.iloc[-2])
+                        h_max, cur, prev = float(highs.max()), float(closes.iloc[-1]), float(closes.iloc[-2])
                         for c in chunk_codes:
                             if h_max > 0: dd_map[c] = round(((h_max - cur) / h_max) * 100, 2)
                             if prev > 0: chg_map[c] = round(((cur - prev) / prev) * 100, 2)
@@ -203,7 +222,7 @@ def batch_append_tech_indicators_fast(res_df):
     return res_df
 
 # ==========================================
-# 族群統計函數 (st.columns 橫向並列架構)
+# 5. 族群統計並列
 # ==========================================
 def display_industry_cluster_stats(df_target):
     if not df_target.empty and '產業' in df_target.columns:
@@ -219,7 +238,7 @@ def display_industry_cluster_stats(df_target):
             st.write("") 
 
 # ==========================================
-# 4. 主程式控制核心
+# 6. 主程式執行流
 # ==========================================
 try:
     with st.spinner("正在同步全台股籌碼與盤後數據..."):
@@ -229,30 +248,28 @@ try:
         st.warning("📅 暫時無法取得證交所開放資料。")
     else:
         # ==========================================
-        # 側邊欄：完整功能還原區
+        # 側邊欄控制區
         # ==========================================
         with st.sidebar:
             st.header("🎯 策略與條件選擇")
             
-            # 還原核心策略切換
+            # 還原左側策略單選切換
             strategy = st.radio(
                 "選擇選股策略",
                 ["🚀 近期強勢", "🛡️ 穩健長期投資", "🕵️ 主力支撐", "📉 回檔進場股"]
             )
             
             st.markdown("---")
-            st.subheader("⚙️ 大範圍過濾條件")
-            with st.form(key="filter_form"):
+            
+            # 💡 【核心修正】將大範圍過濾加入 st.expander 中，預設收合狀態 (expanded=False)，完美隱藏！
+            with st.expander("⚙️ 大範圍過濾條件", expanded=False):
                 min_p = st.slider("最低股價", min_value=0.0, max_value=500.0, value=15.0, step=5.0)
                 max_p = st.slider("最高股價", min_value=100.0, max_value=2000.0, value=1000.0, step=50.0)
                 min_v = st.slider("最低成交量(張)", min_value=0, max_value=10000, value=500, step=100)
-                
                 pe_min, pe_max = st.slider("本益比合理區間", min_value=0.0, max_value=100.0, value=(8.0, 22.0), step=1.0)
                 target_industry = st.selectbox("選擇指定產業", options=["全部"] + sorted(list(df_base['industry'].unique())), index=0)
-                
-                submit_button = st.form_submit_button(label="🚀 套用變更條件")
 
-        # 資料基礎篩選
+        # 資料大範圍預先篩選
         df_filtered = df_base[(df_base['price'] >= min_p) & (df_base['price'] <= max_p) & (df_base['vol'] >= min_v)].copy()
         if target_industry != "全部":
             df_filtered = df_filtered[df_filtered['industry'] == target_industry]
@@ -265,64 +282,26 @@ try:
                 df_pool.loc[df_pool['chip_ratio'] >= 10.0, '支撐力道'] = "🔥"
                 df_pool.loc[(df_pool['chip_ratio'] >= 4.0) & (df_pool['chip_ratio'] < 10.0), '支撐力道'] = "✅"
                 df_pool.loc[df_pool['chip_ratio'] < 0.0, '支撐力道'] = "📉"
-                
                 df_pool['K線連結'] = df_pool['code'].apply(lambda x: f"https://tw.stock.yahoo.com/quote/{x}")
         else:
-            base_cols = df_base.columns.tolist()
-            df_pool = pd.DataFrame(columns=base_cols + ['回檔%', '今日漲幅%', '支撐力道', 'K線連結'])
+            df_pool = pd.DataFrame(columns=df_base.columns.tolist() + ['回檔%', '今日漲幅%', '支撐力道', 'K線連結'])
 
-        # ETF 成分對照
-        etf_db = {
-            "2330": ["0050", "00919", "00929"], "2317": ["0050", "00919", "00929"], 
-            "2454": ["0050", "0056", "00878", "00919", "00929", "00940"], "2308": ["0050", "00929"], 
-            "3711": ["0050", "0056", "00878", "00919"], "2303": ["0050", "0056", "00878", "00919", "00929", "00940"],
-            "2881": ["0050", "00878", "00919", "00940"], "2882": ["0050", "00878", "00919"], 
-            "2891": ["0050", "0056", "00878", "00919", "00940"], "2382": ["0050", "0056", "00878", "00919", "00940"], 
-            "2886": ["0050", "00878"], "3008": ["0050", "00919", "00929"], "2884": ["0050"], 
-            "2885": ["0050", "00878", "00940"], "2892": ["0050", "00940"], 
-            "2357": ["0050", "0056", "00878", "00919", "00929", "00940"], "3231": ["0050", "0056", "00878", "00929"], 
-            "1216": ["0050", "0056", "00878", "00940"], "2412": ["0050", "00878"], "1301": ["0050"], 
-            "1303": ["0050"], "2603": ["0050", "0056", "00878", "00919", "00940"], "3037": ["0050"],
-            "2301": ["0050", "0056", "00878", "00929"], "4904": ["0050", "00878"], "2327": ["0050", "00919"], 
-            "3045": ["0050", "00878", "00940"], "2408": ["0050"], "2449": ["0050", "0056", "00878"], 
-            "2345": ["0050"], "2395": ["0050"], "2360": ["0050"], "2368": ["0050"], "3017": ["0050"], 
-            "2383": ["0050"], "2207": ["0050"], "6669": ["0050"], "3653": ["0050"], "3661": ["0050"], 
-            "2002": ["0050"], "5880": ["0050"], "2880": ["0050", "0056", "00878"], "2883": ["0050", "00940"],
-            "2890": ["0050", "00940"], "6505": ["0050"], "6919": ["0050"], "7769": ["0050"], 
-            "2059": ["0050"], "2344": ["0050"], "2376": ["0056", "00878"], 
-            "2324": ["0056", "00878", "00919", "00929", "00940"], 
-            "2356": ["0056", "00878", "00940"], "2385": ["0056", "00940"], 
-            "3034": ["0056", "00878", "00919", "00929", "00940"], "3702": ["0056", "00940"],
-            "4938": ["0056", "00929", "00940"], "3293": ["0056", "00878", "00940"], 
-            "2474": ["0056", "00878", "00940"], "3005": ["0056", "00940"], "2379": ["0056", "00878", "00940"], 
-            "2421": ["0056", "00940"], "6414": ["0056", "00940"], "3406": ["0056", "00919", "00940"],
-            "2439": ["0056", "00940"], "6188": ["0056", "00940"], "6285": ["0056", "00940"], 
-            "8016": ["0056", "00940"], "6139": ["0056", "00940"], "5269": ["0056", "00940"], 
-            "6196": ["0056", "00940"], "6239": ["0056", "00919", "00929", "00940"], "4958": ["00878", "00919"], 
-            "1402": ["00878"], "2912": ["00878", "00940"], "2609": ["00919"], "8209": ["00919"],
-            "6488": ["00929", "00940"], "2801": ["00940"], "9904": ["00940"], "1102": ["00940"], 
-            "4915": ["00940"], "2615": ["00940"], "1319": ["00940"], "3706": ["00940"], 
-            "6176": ["00940"], "1513": ["00940"], "2393": ["00940"], "6257": ["00940"]
-        }
-
+        # 對接 ETF 標籤
         if not df_pool.empty:
             df_pool['name'] = df_pool.apply(merge_etf_info, axis=1)
 
+        # 重新命名與處理 None 蟲
         df_display = df_pool.rename(columns={
             'code': '代號', 'name': '名稱', 'industry': '產業', 'price': '股價', 
             'chip_ratio': '集中度%', 'pe': '本益比', 'value_billion': '成交額(億)'
         })
-
-        # 完美封殺 None 機制
         df_display['本益比'] = pd.to_numeric(df_display['本益比'], errors='coerce')
         df_display['本益比原始'] = df_display['本益比'] 
         df_display['本益比'] = df_display['本益比'].apply(lambda x: f"{x:.2f}" if pd.notnull(x) else "—")
 
         cols_order = ['代號', '名稱', '產業', '今日漲幅%', '股價', '回檔%', '集中度%', '支撐力道', '成交額(億)', '本益比', 'K線連結']
 
-        # ==========================================
-        # 根據側邊欄所選策略切換大表數據
-        # ==========================================
+        # 4大策略篩選流
         if not df_display.empty:
             if strategy == "🚀 近期強勢":
                 df_final = df_display[df_display['今日漲幅%'] >= 0.5].sort_values(by='今日漲幅%', ascending=False).head(25)
@@ -337,12 +316,12 @@ try:
         else:
             df_final = pd.DataFrame(columns=cols_order)
 
-        # 頂部全局搜尋功能
+        # 頂部全局快速搜尋
         search_query = st.text_input("🔍 全局個股快速定位", placeholder="例如: 2330 或 台積電").strip()
         
         grid_config = {
             "代號": st.column_config.TextColumn("代號", pinned=True, width="small"),  
-            "名稱": st.column_config.TextColumn("名稱", pinned=True, width=115),  
+            "名稱": st.column_config.TextColumn("名稱", pinned=True, width=150),  
             "產業": st.column_config.TextColumn("產業", width=115),  
             "今日漲幅%": st.column_config.NumberColumn("今日漲幅%", format="%.2f %%", width="small"),
             "股價": st.column_config.NumberColumn("股價", format="%.2f", width="small"),
@@ -361,15 +340,9 @@ try:
             st.dataframe(df_display[search_mask][cols_order], use_container_width=True, hide_index=True, column_config=grid_config)
             st.markdown("---")
 
-        # ==========================================
-        # 主畫面大表渲染與族群統計並列
-        # ==========================================
-        st.subheader(f"🎯 策略：{strategy}")
-        
-        # 顯示當前策略下的並列族群統計數據磚
+        # 主畫面大表與族群並列統計
+        st.markdown(f"### 🎯 策略結果：{strategy}")
         display_industry_cluster_stats(df_final)
-        
-        # 顯示主要數據大表
         st.dataframe(df_final[cols_order], use_container_width=True, hide_index=True, height=580, column_config=grid_config)
 
 except Exception as e:
