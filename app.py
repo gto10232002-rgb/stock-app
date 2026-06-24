@@ -203,12 +203,11 @@ def batch_append_tech_indicators_fast(res_df):
     return res_df
 
 # ==========================================
-# 新增功能：產業聚落統計函數 (小於 3 檔不列出)
+# 產業聚落統計函數 (小於 3 檔不列出)
 # ==========================================
 def display_industry_cluster_stats(df_target):
     if not df_target.empty and '產業' in df_target.columns:
         ind_counts = df_target['產業'].value_counts()
-        # 核心篩選：只留大於等於 3 的產業
         ind_counts = ind_counts[ind_counts >= 3]
         if not ind_counts.empty:
             stats_list = [f"**{ind}** ({count}檔)" for ind, count in ind_counts.items()]
@@ -224,28 +223,20 @@ try:
     if df_base.empty:
         st.warning("📅 暫時無法取得證交所開放資料。")
     else:
+        # 側邊欄改為單純的過濾條件控制區
         with st.sidebar:
-            st.header("🎯 選股策略導覽")
-            
-            selected_strategy = st.radio(
-                "請選擇觀測策略：",
-                ["🚀 1. 近期強勢", "🛡️ 2. 穩健長期投資", "🕵️ 3. 主力支撐", "📉 4. 回檔進場股"],
-                index=0
-            )
-            
-            st.markdown("---")
-            
-            with st.expander("⚙️ 篩選大範圍過濾 (點擊展開)", expanded=False):
-                with st.form(key="filter_form"):
-                    min_p = st.slider("最低股價", min_value=0.0, max_value=500.0, value=15.0, step=5.0)
-                    max_p = st.slider("最高股價", min_value=100.0, max_value=2000.0, value=1000.0, step=50.0)
-                    min_v = st.slider("最低成交量(張)", min_value=0, max_value=10000, value=500, step=100)
-                    
-                    pe_min, pe_max = st.slider("本益比合理區間", min_value=0.0, max_value=100.0, value=(8.0, 22.0), step=1.0)
-                    target_industry = st.selectbox("選擇指定產業", options=["全部"] + sorted(list(df_base['industry'].unique())), index=0)
-                    
-                    submit_button = st.form_submit_button(label="🚀 套用變更條件")
+            st.header("⚙️ 大範圍過濾條件")
+            with st.form(key="filter_form"):
+                min_p = st.slider("最低股價", min_value=0.0, max_value=500.0, value=15.0, step=5.0)
+                max_p = st.slider("最高股價", min_value=100.0, max_value=2000.0, value=1000.0, step=50.0)
+                min_v = st.slider("最低成交量(張)", min_value=0, max_value=10000, value=500, step=100)
+                
+                pe_min, pe_max = st.slider("本益比合理區間", min_value=0.0, max_value=100.0, value=(8.0, 22.0), step=1.0)
+                target_industry = st.selectbox("選擇指定產業", options=["全部"] + sorted(list(df_base['industry'].unique())), index=0)
+                
+                submit_button = st.form_submit_button(label="🚀 套用變更條件")
 
+        # 資料篩選與加工流程
         df_filtered = df_base[(df_base['price'] >= min_p) & (df_base['price'] <= max_p) & (df_base['vol'] >= min_v)].copy()
         if target_industry != "全部":
             df_filtered = df_filtered[df_filtered['industry'] == target_industry]
@@ -264,7 +255,7 @@ try:
             base_cols = df_base.columns.tolist()
             df_pool = pd.DataFrame(columns=base_cols + ['回檔%', '今日漲幅%', '支撐力道', 'K線連結'])
 
-        # 特定族群歷史資料庫對照
+        # ETF 成分資料庫對照
         etf_db = {
             "2330": ["0050", "00919", "00929"], "2317": ["0050", "00919", "00929"], 
             "2454": ["0050", "0056", "00878", "00919", "00929", "00940"], "2308": ["0050", "00929"], 
@@ -288,12 +279,6 @@ try:
             "3034": ["0056", "00878", "00919", "00929", "00940"], "3702": ["0056", "00940"],
             "4938": ["0056", "00929", "00940"], "3293": ["0056", "00878", "00940"], 
             "2474": ["0056", "00878", "00940"], "3005": ["0056", "00940"], "2379": ["0056", "00878", "00940"], 
-            "2404": ["0056", "00919", "00929", "00940"], "6121": ["0056"], 
-            "2618": ["0056", "00878", "00919", "00940"], "5347": ["0056", "00878", "00919"],
-            "3044": ["0056", "00929", "00940"], "2610": ["0056", "00940"], "3036": ["0056", "00929", "00940"],
-            "1504": ["0056", "00940"], "2312": ["0056", "00940"], "2458": ["0056", "00940"], 
-            "3042": ["0056", "00940"], "5469": ["0056", "00940"], "6278": ["0056", "00940"], 
-            "2915": ["0056", "00940"], "8069": ["0056", "00940"], "3023": ["0056", "00940"], 
             "2421": ["0056", "00940"], "6414": ["0056", "00940"], "3406": ["0056", "00919", "00940"],
             "2439": ["0056", "00940"], "6188": ["0056", "00940"], "6285": ["0056", "00940"], 
             "8016": ["0056", "00940"], "6139": ["0056", "00940"], "5269": ["0056", "00940"], 
@@ -319,14 +304,20 @@ try:
             'chip_ratio': '集中度%', 'pe': '本益比', 'value_billion': '成交額(億)'
         })
 
-        # 💡 【None優化關鍵點】：後台先完成四捨五入轉換，並確保為 float 類型
-        df_display['本益比'] = pd.to_numeric(df_display['本益比'], errors='coerce').round(2)
+        # 💡 【核心技術點】：將本益比轉成字串，並把缺失值替換成金融專業破折號 "—"，徹底擊殺 None 蟲！
+        df_display['本益比'] = pd.to_numeric(df_display['本益比'], errors='coerce')
+        df_display['本益比原始'] = df_display['本益比'] # 留底供條件過濾使用
+        df_display['本益比'] = df_display['本益比'].apply(lambda x: f"{x:.2f}" if pd.notnull(x) else "—")
 
         cols_order = ['代號', '名稱', '產業', '今日漲幅%', '股價', '回檔%', '集中度%', '支撐力道', '成交額(億)', '本益比', 'K線連結']
 
+        # 建立四個策略對應的數據切片
         if not df_display.empty:
             df_strong = df_display[df_display['今日漲幅%'] >= 0.5].sort_values(by='今日漲幅%', ascending=False).head(25)
-            df_stable = df_display[(df_display['本益比'] >= pe_min) & (df_display['本益比'] <= pe_max)].sort_values(by='成交額(億)', ascending=False).head(25)
+            
+            # 使用未轉成字串前的原始欄位進行合理區間過濾
+            df_stable = df_display[(df_display['本益比原始'] >= pe_min) & (df_display['本益比原始'] <= pe_max)].sort_values(by='成交額(億)', ascending=False).head(25)
+            
             df_chips_high = df_display[df_display['集中度%'] >= 2.0].sort_values(by='集中度%', ascending=False).head(25)
             df_drawdown = df_display[(df_display['回檔%'] >= 3.0) & (df_display['集中度%'] >= -2.0)].sort_values(by='回檔%', ascending=False).head(25)
         else:
@@ -335,9 +326,10 @@ try:
             df_chips_high = pd.DataFrame(columns=cols_order)
             df_drawdown = pd.DataFrame(columns=cols_order)
 
+        # 頂部全局搜尋功能
         search_query = st.text_input("🔍 全局個股快速定位 (輸入代號或名稱可直接在大盤池中尋找)", placeholder="例如: 2330 或 台積電").strip()
         
-        # 💡 【None優化關鍵點】：移除 format="%.2f" 參數，交由 Streamlit 處理標準 float 空值
+        # 欄位定義配置 (本益比改為 TextColumn 完美相容字串破折號)
         grid_config = {
             "代號": st.column_config.TextColumn("代號", pinned=True, width="small"),  
             "名稱": st.column_config.TextColumn("名稱", pinned=True, width=115),  
@@ -348,7 +340,7 @@ try:
             "集中度%": st.column_config.NumberColumn("集中度%", format="%.2f %%", width="small"),
             "支撐力道": st.column_config.TextColumn("支撐力道", width="small"),
             "成交額(億)": st.column_config.NumberColumn("成交額(億)", format="%.2f 億", width="small"),
-            "本益比": st.column_config.NumberColumn("本益比", width="small"),
+            "本益比": st.column_config.TextColumn("本益比", width="small"),
             "K線連結": st.column_config.LinkColumn("K線", display_text="📈查看", width="small")
         }
 
@@ -359,25 +351,32 @@ try:
             st.dataframe(df_display[search_mask][cols_order], use_container_width=True, hide_index=True, column_config=grid_config)
             st.markdown("---")
 
-        if selected_strategy == "🚀 1. 近期強勢":
+        # 💡 【橫向並列核心】：使用 st.tabs 將所有策略橫向並列排開
+        tab1, tab2, tab3, tab4 = st.tabs([
+            "🚀 1. 近期強勢", 
+            "🛡️ 2. 穩健長期投資", 
+            "🕵️ 3. 主力支撐 (法人集中度)", 
+            "📉 4. 回檔進場股"
+        ])
+
+        with tab1:
             st.subheader("🔥 近期強勢標的 (依今日漲幅排序)")
-            display_industry_cluster_stats(df_strong)  # 帶入新版產業統計
+            display_industry_cluster_stats(df_strong)
             st.dataframe(df_strong[cols_order], use_container_width=True, hide_index=True, height=580, column_config=grid_config)
             
-        elif selected_strategy == "🛡️ 2. 穩健長期投資":
+        with tab2:
             st.subheader("💎 穩健長期投資標的 (自訂本益比區間精選)")
-            display_industry_cluster_stats(df_stable)  # 帶入新版產業統計
+            display_industry_cluster_stats(df_stable)
             st.dataframe(df_stable[cols_order], use_container_width=True, hide_index=True, height=580, column_config=grid_config)
             
-        elif selected_strategy == "🕵️ 3. 主力支撐":
-            # 🛠️ 標題修改為 (法人集中度)
+        with tab3:
             st.subheader("💪 主力支撐標的 (法人集中度)")
-            display_industry_cluster_stats(df_chips_high)  # 帶入新版產業統計
+            display_industry_cluster_stats(df_chips_high)
             st.dataframe(df_chips_high[cols_order], use_container_width=True, hide_index=True, height=580, column_config=grid_config)
             
-        elif selected_strategy == "📉 4. 回檔進場股":
+        with tab4:
             st.subheader("🛒 修正回檔潛伏標的 (依高點回檔幅度排序)")
-            display_industry_cluster_stats(df_drawdown)  # 帶入新版產業統計
+            display_industry_cluster_stats(df_drawdown)
             st.dataframe(df_drawdown[cols_order], use_container_width=True, hide_index=True, height=580, column_config=grid_config)
 
 except Exception as e:
