@@ -22,7 +22,7 @@ st.markdown("### 📊 台股多元策略選股系統")
 st.caption("📌 關盤資訊會在每日 18:30 之後導入")
 
 # ==========================================
-# 2. 💡 ETF 成分資料庫與名稱合併函數（移至最頂端防止 NameError）
+# 2. 💡 ETF 成分資料庫與名稱合併函數
 # ==========================================
 etf_db = {
     "2330": ["0050", "00919", "00929"], "2317": ["0050", "00919", "00929"], 
@@ -222,7 +222,7 @@ def batch_append_tech_indicators_fast(res_df):
     return res_df
 
 # ==========================================
-# 5. 族群統計並列
+# 5. 💡 族群統計（修正：併入同一個色塊/容器內顯示）
 # ==========================================
 def display_industry_cluster_stats(df_target):
     if not df_target.empty and '產業' in df_target.columns:
@@ -230,11 +230,11 @@ def display_industry_cluster_stats(df_target):
         ind_counts = ind_counts[ind_counts >= 3] 
         
         if not ind_counts.empty:
-            st.markdown("##### 🧬 熱門族群並列統計 (≥3檔)")
-            cols = st.columns(len(ind_counts))
-            for idx, (ind, count) in enumerate(ind_counts.items()):
-                with cols[idx]:
-                    st.info(f"**{ind}** \n`共 {count} 檔標的`")
+            # 串接所有熱門產業成一條文字，統一塞入同一個 st.info 色塊中
+            stats_items = [f"**{ind}** ({count} 檔)" for ind, count in ind_counts.items()]
+            stats_string = "  ｜  ".join(stats_items)
+            
+            st.info(f"🧬 **熱門族群並列統計 (≥3檔)：** {stats_string}")
             st.write("") 
 
 # ==========================================
@@ -253,7 +253,6 @@ try:
         with st.sidebar:
             st.header("🎯 策略與條件選擇")
             
-            # 還原左側策略單選切換
             strategy = st.radio(
                 "選擇選股策略",
                 ["🚀 近期強勢", "🛡️ 穩健長期投資", "🕵️ 主力支撐", "📉 回檔進場股"]
@@ -261,7 +260,7 @@ try:
             
             st.markdown("---")
             
-            # 💡 【核心修正】將大範圍過濾加入 st.expander 中，預設收合狀態 (expanded=False)，完美隱藏！
+            # 大範圍過濾條件放入收合器中（預設收合隱藏）
             with st.expander("⚙️ 大範圍過濾條件", expanded=False):
                 min_p = st.slider("最低股價", min_value=0.0, max_value=500.0, value=15.0, step=5.0)
                 max_p = st.slider("最高股價", min_value=100.0, max_value=2000.0, value=1000.0, step=50.0)
@@ -280,7 +279,7 @@ try:
                 
                 df_pool['支撐力道'] = "🟦"
                 df_pool.loc[df_pool['chip_ratio'] >= 10.0, '支撐力道'] = "🔥"
-                df_pool.loc[(df_pool['chip_ratio'] >= 4.0) & (df_pool['chip_ratio'] < 10.0), '支撐力道'] = "✅"
+                df_pool.loc[(df_pool['chip_ratio'] >= 4.0) & (df_pool['chip_ratio'] < 10.0), '支支撑力道'] = "✅"
                 df_pool.loc[df_pool['chip_ratio'] < 0.0, '支撐力道'] = "📉"
                 df_pool['K線連結'] = df_pool['code'].apply(lambda x: f"https://tw.stock.yahoo.com/quote/{x}")
         else:
@@ -290,7 +289,7 @@ try:
         if not df_pool.empty:
             df_pool['name'] = df_pool.apply(merge_etf_info, axis=1)
 
-        # 重新命名與處理 None 蟲
+        # 重新命名與處理 None
         df_display = df_pool.rename(columns={
             'code': '代號', 'name': '名稱', 'industry': '產業', 'price': '股價', 
             'chip_ratio': '集中度%', 'pe': '本益比', 'value_billion': '成交額(億)'
@@ -319,9 +318,10 @@ try:
         # 頂部全局快速搜尋
         search_query = st.text_input("🔍 全局個股快速定位", placeholder="例如: 2330 或 台積電").strip()
         
+        # 💡 【優化：移除出錯的 pinned=True 參數】
         grid_config = {
-            "代號": st.column_config.TextColumn("代號", pinned=True, width="small"),  
-            "名稱": st.column_config.TextColumn("名稱", pinned=True, width=150),  
+            "代號": st.column_config.TextColumn("代號", width="small"),  
+            "名稱": st.column_config.TextColumn("名稱", width=150),  
             "產業": st.column_config.TextColumn("產業", width=115),  
             "今日漲幅%": st.column_config.NumberColumn("今日漲幅%", format="%.2f %%", width="small"),
             "股價": st.column_config.NumberColumn("股價", format="%.2f", width="small"),
@@ -342,7 +342,11 @@ try:
 
         # 主畫面大表與族群並列統計
         st.markdown(f"### 🎯 策略結果：{strategy}")
+        
+        # 顯示整合至單一色塊的族群統計
         display_industry_cluster_stats(df_final)
+        
+        # 💡 【恢復：保留 height=580 即可達到表頭凍結效果】
         st.dataframe(df_final[cols_order], use_container_width=True, hide_index=True, height=580, column_config=grid_config)
 
 except Exception as e:
