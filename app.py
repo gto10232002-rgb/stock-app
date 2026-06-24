@@ -3,6 +3,7 @@ import pandas as pd
 import requests
 import datetime
 import yfinance as yf
+import numpy as np
 
 # ==========================================
 # 1. 頁面配置與 CSS 樣式微調
@@ -17,7 +18,6 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
-# 移除「四大象限觀測版」字眼
 st.markdown("### 📊 台股多元策略選股系統")
 st.caption("📌 關盤資訊會在每日 18:30 之後導入")
 
@@ -103,19 +103,20 @@ def get_stock_base_data_final():
     df['trade_value'] = pd.to_numeric(df['trade_value'], errors='coerce').fillna(0.0)
 
     net_chips = df['fi'] + df['it']
-    df['chip_ratio'] = (net_chips / df['vol'].replace(0, pd.NA)).fillna(0.0) * 100
+    df['chip_ratio'] = (net_chips / df['vol'].replace(0, np.nan)).fillna(0.0) * 100
     df['chip_ratio'] = df['chip_ratio'].clip(upper=100.0).round(2)
     df['value_billion'] = (df['trade_value'] / 100000000).fillna(0.0).round(2)
 
     if not df_pe.empty:
         df = pd.merge(df, df_pe, on='code', how='left')
     if 'pe' not in df.columns:
-        df['pe'] = pd.NA
+        df['pe'] = np.nan
 
     if not df_ind.empty:
         df = pd.merge(df, df_ind, on='code', how='left')
     df['industry'] = df['industry'].fillna('其他')
     
+    # 修正：將編號 31 的「反對電子業」回歸正確名稱「其他電子業」
     ind_map = {
         "01": "水泥工業", "02": "食品工業", "03": "塑膠工業", "04": "紡織纖維", "05": "電機機械",
         "06": "電器電欄", "07": "化學工業", "08": "生技醫療業", "09": "玻璃陶瓷", "10": "造紙工業",
@@ -123,7 +124,7 @@ def get_stock_base_data_final():
         "16": "觀光餐旅", "17": "金融保險", "18": "貿易百貨", "19": "綜合業", "20": "其他業",
         "21": "化學工業", "22": "生技醫療業", "23": "油電燃氣業",
         "24": "半導體業", "25": "電腦及週邊設備業", "26": "光電業", "27": "通信網路業", 
-        "28": "電子零組件業", "29": "電子通路業", "30": "資訊服務業", "31": "反對電子業",
+        "28": "電子零組件業", "29": "電子通路業", "30": "資訊服務業", "31": "其他電子業",
         "32": "文化創意業", "33": "農業科技業", "34": "電子商務業", "35": "綠能環保業",
         "36": "數位雲端業", "37": "運動休閒業", "38": "居家生活業", "80": "建材營建"
     }
@@ -134,7 +135,7 @@ def get_stock_base_data_final():
     return df[cols]
 
 # ==========================================
-# 3. 批量高效獲取技術指標 (完美兼容多重索引結構與舊版相容性)
+# 3. 批量高效獲取技術指標
 # ==========================================
 def batch_append_tech_indicators_fast(res_df):
     res_df['回檔%'] = 0.0
@@ -242,9 +243,11 @@ try:
             with st.spinner(f"正在分析 {len(df_filtered)} 檔符合條件標的之即時技術指標..."):
                 df_pool = batch_append_tech_indicators_fast(df_filtered)
                 
-                df_pool['支撐力道'] = "🔹 觀察中"
-                df_pool.loc[df_pool['chip_ratio'] >= 10.0, '支撐力道'] = "🔥 極強支撐"
-                df_pool.loc[(df_pool['chip_ratio'] >= 4.0) & (df_pool['chip_ratio'] < 10.0), '支撐力道'] = "✅ 健康買盤"
+                # 修正：支撐力道調整為純圖示（包含負數籌碼顯示為 📉）
+                df_pool['支撐力道'] = "🟦"
+                df_pool.loc[df_pool['chip_ratio'] >= 10.0, '支撐力道'] = "🔥"
+                df_pool.loc[(df_pool['chip_ratio'] >= 4.0) & (df_pool['chip_ratio'] < 10.0), '支撐力道'] = "✅"
+                df_pool.loc[df_pool['chip_ratio'] < 0.0, '支撐力道'] = "📉"
                 
                 df_pool['K線連結'] = df_pool['code'].apply(lambda x: f"https://tw.stock.yahoo.com/quote/{x}")
         else:
@@ -306,6 +309,9 @@ try:
             'chip_ratio': '集中度%', 'pe': '本益比', 'value_billion': '成交額(億)'
         })
 
+        # 修正：強制將數值欄位轉換為純 numeric 浮點數，確保缺失值在前端呈現「優雅留白」，徹底解決 None 字眼問題
+        df_display['本益比'] = pd.to_numeric(df_display['本益比'], errors='coerce')
+
         cols_order = ['代號', '名稱', '產業', '今日漲幅%', '股價', '回檔%', '集中度%', '支撐力道', '成交額(億)', '本益比', 'K線連結']
 
         if not df_display.empty:
@@ -321,11 +327,11 @@ try:
 
         search_query = st.text_input("🔍 全局個股快速定位 (輸入代號或名稱可直接在大盤池中尋找)", placeholder="例如: 2330 或 台積電").strip()
         
-        # 🛠️ 已將名稱欄位精準調整為 115 像素
+        # 🛠️ 已將「名稱」與「產業」欄寬雙雙微調為 115 像素
         grid_config = {
             "代號": st.column_config.TextColumn("代號", pinned=True, width="small"),  
             "名稱": st.column_config.TextColumn("名稱", pinned=True, width=115),  
-            "產業": st.column_config.TextColumn("產業", width="medium"),
+            "產業": st.column_config.TextColumn("產業", width=115),  
             "今日漲幅%": st.column_config.NumberColumn("今日漲幅%", format="%.2f %%", width="small"),
             "股價": st.column_config.NumberColumn("股價", format="%.2f", width="small"),
             "回檔%": st.column_config.NumberColumn("回檔%", format="%.2f %%", width="small"),
