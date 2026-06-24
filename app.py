@@ -17,7 +17,8 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
-st.markdown("### 📊 台股多元策略選股系統 (四大象限觀測版)")
+# 移除「四大象限觀測版」字眼
+st.markdown("### 📊 台股多元策略選股系統")
 st.caption("📌 關盤資訊會在每日 18:30 之後導入")
 
 # ==========================================
@@ -117,7 +118,7 @@ def get_stock_base_data_final():
     
     ind_map = {
         "01": "水泥工業", "02": "食品工業", "03": "塑膠工業", "04": "紡織纖維", "05": "電機機械",
-        "06": "電器電纜", "07": "化學工業", "08": "生技醫療業", "09": "玻璃陶瓷", "10": "造紙工業",
+        "06": "電器電欄", "07": "化學工業", "08": "生技醫療業", "09": "玻璃陶瓷", "10": "造紙工業",
         "11": "鋼鐵工業", "12": "橡膠工業", "13": "汽車工業", "14": "建材營建", "15": "航運業",
         "16": "觀光餐旅", "17": "金融保險", "18": "貿易百貨", "19": "綜合業", "20": "其他業",
         "21": "化學工業", "22": "生技醫療業", "23": "油電燃氣業",
@@ -133,7 +134,7 @@ def get_stock_base_data_final():
     return df[cols]
 
 # ==========================================
-# 3. 批量高效獲取技術指標 (強制作出雙層 index 相容)
+# 3. 批量高效獲取技術指標
 # ==========================================
 def batch_append_tech_indicators_fast(res_df):
     res_df['回檔%'] = 0.0
@@ -150,7 +151,6 @@ def batch_append_tech_indicators_fast(res_df):
         ticker_list = [f"{str(c).strip()}.TW" for c in chunk_codes]
         
         try:
-            # keep_multiindex=True 確保無論抓取幾檔，結構都完全一致
             data = yf.download(ticker_list, period="1mo", progress=False, timeout=10, keep_multiindex=True)
             if data.empty:
                 continue
@@ -178,7 +178,7 @@ def batch_append_tech_indicators_fast(res_df):
     return res_df
 
 # ==========================================
-# 4. 主程式控制核心 (完全搬移至左側隱藏欄位)
+# 4. 主程式控制核心
 # ==========================================
 try:
     with st.spinner("正在同步全台股籌碼與盤後數據..."):
@@ -187,23 +187,30 @@ try:
     if df_base.empty:
         st.warning("📅 暫時無法取得證交所開放資料。")
     else:
-        # 📌 關鍵修正 1：所有的控制項與表單完全鎖定在「左側隱藏欄位 (st.sidebar)」內
+        # 🛠️ 側邊欄配置優化區塊
         with st.sidebar:
-            st.header("⚙️ 篩選大範圍過濾")
+            st.header("🎯 選股策略導覽")
             
-            with st.form(key="filter_form"):
-                st.markdown("🎯 **細部參數 (僅自訂模式生效)**")
-                
-                # 關鍵修正 2：改用標準 st.slider，完美根除「15.0 is not in iterable」錯誤
-                min_p = st.slider("最低股價", min_value=0.0, max_value=500.0, value=15.0, step=5.0)
-                max_p = st.slider("最高股價", min_value=100.0, max_value=2000.0, value=1000.0, step=50.0)
-                min_v = st.slider("最低成交量(張)", min_value=0, max_value=10000, value=500, step=100)
-                
-                pe_min, pe_max = st.slider("本益比合理區間", min_value=0.0, max_value=100.0, value=(8.0, 22.0), step=1.0)
-                target_industry = st.selectbox("選擇指定產業", options=["全部"] + sorted(list(df_base['industry'].unique())), index=0)
-                
-                # 關鍵修正 3：Submit 提交按鈕嚴格封裝於 form 之內，解決警告紅框
-                submit_button = st.form_submit_button(label="🚀 重新整理大盤分析")
+            # 1. 策略選取移至側邊欄，開網頁即自動套用預設 index=0 的結果
+            selected_strategy = st.radio(
+                "請選擇觀測策略：",
+                ["🚀 1. 趨勢強勢股", "🛡️ 2. 穩健發展股", "🕵️ 3. 主力高支撐股", "📉 4. 回檔進場股"],
+                index=0
+            )
+            
+            st.markdown("---")
+            
+            # 3. 將「篩選大範圍過濾」放入預設關閉(expanded=False)的折疊面板中
+            with st.expander("⚙️ 篩選大範圍過濾 (點擊展開)", expanded=False):
+                with st.form(key="filter_form"):
+                    min_p = st.slider("最低股價", min_value=0.0, max_value=500.0, value=15.0, step=5.0)
+                    max_p = st.slider("最高股價", min_value=100.0, max_value=2000.0, value=1000.0, step=50.0)
+                    min_v = st.slider("最低成交量(張)", min_value=0, max_value=10000, value=500, step=100)
+                    
+                    pe_min, pe_max = st.slider("本益比合理區間", min_value=0.0, max_value=100.0, value=(8.0, 22.0), step=1.0)
+                    target_industry = st.selectbox("選擇指定產業", options=["全部"] + sorted(list(df_base['industry'].unique())), index=0)
+                    
+                    submit_button = st.form_submit_button(label="🚀 套用變更條件")
 
         # 進行大盤數據過濾
         df_filtered = df_base[(df_base['price'] >= min_p) & (df_base['price'] <= max_p) & (df_base['vol'] >= min_v)].copy()
@@ -224,7 +231,7 @@ try:
             base_cols = df_base.columns.tolist()
             df_pool = pd.DataFrame(columns=base_cols + ['回檔%', '今日漲幅%', '支撐力道', 'K線連結'])
 
-        # 🌟 關鍵修正 4：【特定族群歷史資料庫對照】重新對齊並完整補回
+        # 特定族群歷史資料庫對照
         etf_db = {
             "2330": ["0050", "00919", "00929"], "2317": ["0050", "00919", "00929"], 
             "2454": ["0050", "0056", "00878", "00919", "00929", "00940"], "2308": ["0050", "00929"], 
@@ -280,10 +287,10 @@ try:
             'chip_ratio': '集中度%', 'pe': '本益比', 'value_billion': '成交額(億)'
         })
 
-        # 欄位全局顯示排序結構設定
+        # 欄位顯示順序
         cols_order = ['代號', '名稱', '產業', '今日漲幅%', '股價', '回檔%', '集中度%', '支撐力道', '成交額(億)', '本益比', 'K線連結']
 
-        # 分流交叉過濾四大象限
+        # 分流交叉過濾各策略數據
         if not df_display.empty:
             df_strong = df_display[df_display['今日漲幅%'] >= 0.5].sort_values(by='今日漲幅%', ascending=False).head(25)
             df_stable = df_display[(df_display['本益比'] >= pe_min) & (df_display['本益比'] <= pe_max)].sort_values(by='成交額(億)', ascending=False).head(25)
@@ -298,7 +305,7 @@ try:
         # 🌟 主畫面：頂部全局快速搜尋框
         search_query = st.text_input("🔍 全局個股快速定位 (輸入代號或名稱可直接在大盤池中尋找)", placeholder="例如: 2330 或 台積電").strip()
         
-        # Streamlit 數據網格通用表格配置組態
+        # 表格組態定義（支援滾動與前兩欄 Pin 固定欄位）
         grid_config = {
             "代號": st.column_config.TextColumn("代號", pinned=True),  
             "名稱": st.column_config.TextColumn("名稱", pinned=True),  
@@ -320,29 +327,22 @@ try:
             st.dataframe(df_display[search_mask][cols_order], use_container_width=True, hide_index=True, column_config=grid_config)
             st.markdown("---")
 
-        # 🌟 用 Tabs 分頁導覽呈現原生移動端高友善看盤表格
-        tab1, tab2, tab3, tab4 = st.tabs([
-            "🚀 1. 趨勢強勢股", 
-            "🛡️ 2. 穩健發展股", 
-            "🕵️ 3. 主力高支撐股", 
-            "📉 4. 回檔進場股"
-        ])
-        
-        with tab1:
+        # 2. 🎯 根據左側側邊欄的選取狀態，將結果即時投射渲染在網頁主畫面上
+        if selected_strategy == "🚀 1. 趨勢強勢股":
             st.subheader("🔥 趨勢強勢標的 (依今日漲幅排序)")
-            st.dataframe(df_strong[cols_order], use_container_width=True, hide_index=True, height=550, column_config=grid_config)
+            st.dataframe(df_strong[cols_order], use_container_width=True, hide_index=True, height=580, column_config=grid_config)
             
-        with tab2:
+        elif selected_strategy == "🛡️ 2. 穩健發展股":
             st.subheader("💎 穩健發展標的 (自訂本益比區間精選)")
-            st.dataframe(df_stable[cols_order], use_container_width=True, hide_index=True, height=550, column_config=grid_config)
+            st.dataframe(df_stable[cols_order], use_container_width=True, hide_index=True, height=580, column_config=grid_config)
             
-        with tab3:
+        elif selected_strategy == "🕵️ 3. 主力高支撐股":
             st.subheader("💪 主力籌碼吸貨標的 (依法人集中度排序)")
-            st.dataframe(df_chips_high[cols_order], use_container_width=True, hide_index=True, height=550, column_config=grid_config)
+            st.dataframe(df_chips_high[cols_order], use_container_width=True, hide_index=True, height=580, column_config=grid_config)
             
-        with tab4:
+        elif selected_strategy == "📉 4. 回檔進場股":
             st.subheader("🛒 修正回檔潛伏標的 (依高點回檔幅度排序)")
-            st.dataframe(df_drawdown[cols_order], use_container_width=True, hide_index=True, height=550, column_config=grid_config)
+            st.dataframe(df_drawdown[cols_order], use_container_width=True, hide_index=True, height=580, column_config=grid_config)
 
 except Exception as e:
     st.error(f"⚠️ 網頁系統執行異常: {e}")
