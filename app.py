@@ -116,7 +116,6 @@ def get_stock_base_data_final():
         df = pd.merge(df, df_ind, on='code', how='left')
     df['industry'] = df['industry'].fillna('其他')
     
-    # 修正：將編號 31 的「反對電子業」回歸正確名稱「其他電子業」
     ind_map = {
         "01": "水泥工業", "02": "食品工業", "03": "塑膠工業", "04": "紡織纖維", "05": "電機機械",
         "06": "電器電欄", "07": "化學工業", "08": "生技醫療業", "09": "玻璃陶瓷", "10": "造紙工業",
@@ -204,6 +203,18 @@ def batch_append_tech_indicators_fast(res_df):
     return res_df
 
 # ==========================================
+# 新增功能：產業聚落統計函數 (小於 3 檔不列出)
+# ==========================================
+def display_industry_cluster_stats(df_target):
+    if not df_target.empty and '產業' in df_target.columns:
+        ind_counts = df_target['產業'].value_counts()
+        # 核心篩選：只留大於等於 3 的產業
+        ind_counts = ind_counts[ind_counts >= 3]
+        if not ind_counts.empty:
+            stats_list = [f"**{ind}** ({count}檔)" for ind, count in ind_counts.items()]
+            st.info(f"🧬 **同產業聚落統計 (≥3檔)：** {' ｜ '.join(stats_list)}")
+
+# ==========================================
 # 4. 主程式控制核心
 # ==========================================
 try:
@@ -243,7 +254,6 @@ try:
             with st.spinner(f"正在分析 {len(df_filtered)} 檔符合條件標的之即時技術指標..."):
                 df_pool = batch_append_tech_indicators_fast(df_filtered)
                 
-                # 修正：支撐力道調整為純圖示（包含負數籌碼顯示為 📉）
                 df_pool['支撐力道'] = "🟦"
                 df_pool.loc[df_pool['chip_ratio'] >= 10.0, '支撐力道'] = "🔥"
                 df_pool.loc[(df_pool['chip_ratio'] >= 4.0) & (df_pool['chip_ratio'] < 10.0), '支撐力道'] = "✅"
@@ -309,8 +319,8 @@ try:
             'chip_ratio': '集中度%', 'pe': '本益比', 'value_billion': '成交額(億)'
         })
 
-        # 修正：強制將數值欄位轉換為純 numeric 浮點數，確保缺失值在前端呈現「優雅留白」，徹底解決 None 字眼問題
-        df_display['本益比'] = pd.to_numeric(df_display['本益比'], errors='coerce')
+        # 💡 【None優化關鍵點】：後台先完成四捨五入轉換，並確保為 float 類型
+        df_display['本益比'] = pd.to_numeric(df_display['本益比'], errors='coerce').round(2)
 
         cols_order = ['代號', '名稱', '產業', '今日漲幅%', '股價', '回檔%', '集中度%', '支撐力道', '成交額(億)', '本益比', 'K線連結']
 
@@ -327,7 +337,7 @@ try:
 
         search_query = st.text_input("🔍 全局個股快速定位 (輸入代號或名稱可直接在大盤池中尋找)", placeholder="例如: 2330 或 台積電").strip()
         
-        # 🛠️ 已將「名稱」與「產業」欄寬雙雙微調為 115 像素
+        # 💡 【None優化關鍵點】：移除 format="%.2f" 參數，交由 Streamlit 處理標準 float 空值
         grid_config = {
             "代號": st.column_config.TextColumn("代號", pinned=True, width="small"),  
             "名稱": st.column_config.TextColumn("名稱", pinned=True, width=115),  
@@ -338,7 +348,7 @@ try:
             "集中度%": st.column_config.NumberColumn("集中度%", format="%.2f %%", width="small"),
             "支撐力道": st.column_config.TextColumn("支撐力道", width="small"),
             "成交額(億)": st.column_config.NumberColumn("成交額(億)", format="%.2f 億", width="small"),
-            "本益比": st.column_config.NumberColumn("本益比", format="%.2f", width="small"),
+            "本益比": st.column_config.NumberColumn("本益比", width="small"),
             "K線連結": st.column_config.LinkColumn("K線", display_text="📈查看", width="small")
         }
 
@@ -351,18 +361,23 @@ try:
 
         if selected_strategy == "🚀 1. 近期強勢":
             st.subheader("🔥 近期強勢標的 (依今日漲幅排序)")
+            display_industry_cluster_stats(df_strong)  # 帶入新版產業統計
             st.dataframe(df_strong[cols_order], use_container_width=True, hide_index=True, height=580, column_config=grid_config)
             
         elif selected_strategy == "🛡️ 2. 穩健長期投資":
             st.subheader("💎 穩健長期投資標的 (自訂本益比區間精選)")
+            display_industry_cluster_stats(df_stable)  # 帶入新版產業統計
             st.dataframe(df_stable[cols_order], use_container_width=True, hide_index=True, height=580, column_config=grid_config)
             
         elif selected_strategy == "🕵️ 3. 主力支撐":
-            st.subheader("💪 主力支撐標的 (依法人集中度排序)")
+            # 🛠️ 標題修改為 (法人集中度)
+            st.subheader("💪 主力支撐標的 (法人集中度)")
+            display_industry_cluster_stats(df_chips_high)  # 帶入新版產業統計
             st.dataframe(df_chips_high[cols_order], use_container_width=True, hide_index=True, height=580, column_config=grid_config)
             
         elif selected_strategy == "📉 4. 回檔進場股":
             st.subheader("🛒 修正回檔潛伏標的 (依高點回檔幅度排序)")
+            display_industry_cluster_stats(df_drawdown)  # 帶入新版產業統計
             st.dataframe(df_drawdown[cols_order], use_container_width=True, hide_index=True, height=580, column_config=grid_config)
 
 except Exception as e:
