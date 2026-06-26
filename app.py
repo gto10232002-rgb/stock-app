@@ -78,7 +78,6 @@ def get_stock_base_data_final():
         res_p = requests.get("https://openapi.twse.com.tw/v1/exchangeReport/STOCK_DAY_ALL", timeout=15)
         if res_p.status_code == 200 and res_p.json():
             res_json = res_p.json()
-            # 💡 防禦關鍵：確保回傳的是標準 List，且內含資料，防範證交所限流或噴錯
             if isinstance(res_json, list) and len(res_json) > 0 and 'Code' in res_json[0]:
                 raw = pd.DataFrame(res_json)
                 df_price = raw[raw['Code'].str.len() == 4].copy()
@@ -216,7 +215,6 @@ def batch_append_tech_indicators_fast(res_df):
                                 if h_max > 0: dd_map[c] = round(((h_max - cur) / h_max) * 100, 2)
                                 if prev > 0: chg_map[c] = round(((cur - prev) / prev) * 100, 2)
             else:
-                # 💡 防禦機制：處理單一股票或被壓平的單層索引結構
                 if 'Close' in data.columns and 'High' in data.columns:
                     closes, highs = data['Close'].dropna(), data['High'].dropna()
                     if len(closes) >= 2 and len(highs) >= 1:
@@ -232,7 +230,7 @@ def batch_append_tech_indicators_fast(res_df):
     return res_df
 
 # ==========================================
-# 5. 族群統計（修正：首行完美換行結構）
+# 5. 族群統計
 # ==========================================
 def display_industry_cluster_stats(df_target):
     if not df_target.empty and '產業' in df_target.columns:
@@ -242,8 +240,6 @@ def display_industry_cluster_stats(df_target):
         if not ind_counts.empty:
             stats_items = [f"{ind} ({count} 檔)" for ind, count in ind_counts.items()]
             stats_string = "  \n".join(stats_items)
-            
-            # 💡 標題冒號後補齊「雙空格」加換行，強制 Markdown 精準空出首行
             st.info(f"📋 **熱門族群並列統計 (≥3檔)：** \n{stats_string}")
             st.write("") 
 
@@ -270,7 +266,8 @@ try:
             
             with st.expander("⚙️ 大範圍過濾條件", expanded=False):
                 min_p = st.slider("最低股價", min_value=0.0, max_value=500.0, value=15.0, step=5.0)
-                max_p = st.slider("最高股價", min_value=100.0, max_value=2000.0, value=1000.0, step=50.5)
+                # 💡 這裡修正完畢：將 step=50.5 改回 50.0，完美解決衝突
+                max_p = st.slider("最高股價", min_value=100.0, max_value=2000.0, value=1000.0, step=50.0)
                 min_v = st.slider("最低成交量(張)", min_value=0, max_value=10000, value=500, step=100)
                 pe_min, pe_max = st.slider("本益比合理區間", min_value=0.0, max_value=100.0, value=(8.0, 22.0), step=1.0)
                 target_industry = st.selectbox("選擇指定產業", options=["全部"] + sorted(list(df_base['industry'].unique())), index=0)
@@ -316,14 +313,13 @@ try:
             elif strategy == "🕵️ 主力支撐":
                 df_final = df_display[df_display['集中度%'] >= 2.0].sort_values(by='集中度%', ascending=False).head(25)
             elif strategy == "📉 回檔進場股":
-                # 💡 這裡已修正：將原先打錯的 df_final 換回 df_display
                 df_final = df_display[(df_display['回檔%'] >= 3.0) & (df_display['集中度%'] >= -2.0)].sort_values(by='回檔%', ascending=False).head(25) if '回檔%' in df_display.columns else df_display
             else:
                 df_final = pd.DataFrame(columns=cols_order)
         else:
             df_final = pd.DataFrame(columns=cols_order)
 
-        # 💡 欄位寬度與格式設定（加入 pinned=True 實現原生凍結）
+        # 欄位寬度與格式設定
         grid_config = {
             "代號": st.column_config.TextColumn("代號", width="small", pinned=True),  
             "名稱": st.column_config.TextColumn("名稱", width=180, pinned=True),  
@@ -352,11 +348,8 @@ try:
 
         # 主畫面大表與族群並列統計
         st.markdown(f"### 🎯 策略結果：{strategy}")
-        
-        # 顯示已修正格式的族群統計
         display_industry_cluster_stats(df_final)
         
-        # 💡 用普通 Dataframe 傳入並透過 hide_index=True 隱藏流水號，配合 pinned=True 完美解鎖凍結效果
         df_final_show = df_final[cols_order].copy()
         st.dataframe(df_final_show, use_container_width=True, height=580, hide_index=True, column_config=grid_config)
 
