@@ -1,362 +1,119 @@
 import streamlit as st
 import pandas as pd
 import requests
-import datetime
-import yfinance as yf
-import numpy as np
+import urllib3
 
-# ==========================================
-# 1. 頁面配置與 CSS 樣式微調
-# ==========================================
-st.set_page_config(page_title="StockTool", layout="wide")
+# 1. 網頁基本外觀排版設定
+st.set_page_config(page_title="台股即時選股儀表板", layout="wide")
+st.title("📈 台股全市場即時篩選與策略系統")
 
-st.markdown("""
-<style>
-    .block-container { padding-top: 1.8rem !important; padding-bottom: 0rem !important; }
-    h3 { margin-top: 0rem !important; margin-bottom: 0.4rem !important; }
-    .stAlert { padding: 0.6rem !important; }
-</style>
-""", unsafe_allow_html=True)
+# 2. 自動關閉 SSL 安全憑證警告（解決台灣政府/證交所網站常見的連線異常問題）
+urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
-st.markdown("### 📊 台股多元策略選股系統")
-st.caption("📌 關盤資訊會在每日 18:30 之後導入")
-
-# ==========================================
-# 2. ETF 成分資料庫與名稱合併函數
-# ==========================================
-etf_db = {
-    "2330": ["0050", "00919", "00929"], "2317": ["0050", "00919", "00929"], 
-    "2454": ["0050", "0056", "00878", "00919", "00929", "00940"], "2308": ["0050", "00929"], 
-    "3711": ["0050", "0056", "00878", "00919"], "2303": ["0050", "0056", "00878", "00919", "00929", "00940"],
-    "2881": ["0050", "00878", "00919", "00940"], "2882": ["0050", "00878", "00919"], 
-    "2891": ["0050", "0056", "00878", "00919", "00940"], "2382": ["0050", "0056", "00878", "00919", "00940"], 
-    "2886": ["0050", "00878"], "3008": ["0050", "00919", "00929"], "2884": ["0050"], 
-    "2885": ["0050", "00878", "00940"], "2892": ["0050", "00940"], 
-    "2357": ["0050", "0056", "00878", "00919", "00929", "00940"], "3231": ["0050", "0056", "00878", "00929"], 
-    "1216": ["0050", "0056", "00878", "00940"], "2412": ["0050", "00878"], "1301": ["0050"], 
-    "1303": ["0050"], "2603": ["0050", "0056", "00878", "00919", "00940"], "3037": ["0050"],
-    "2301": ["0050", "0056", "00878", "00929"], "4904": ["0050", "00878"], "2327": ["0050", "00919"], 
-    "3045": ["0050", "00878", "00940"], "2408": ["0050"], "2449": ["0050", "0056", "00878"], 
-    "2345": ["0050"], "2395": ["0050"], "2360": ["0050"], "2368": ["0050"], "3017": ["0050"], 
-    "2383": ["0050"], "2207": ["0050"], "6669": ["0050"], "3653": ["0050"], "3661": ["0050"], 
-    "2002": ["0050"], "5880": ["0050"], "2880": ["0050", "0056", "00878"], "2883": ["0050", "00940"],
-    "2890": ["0050", "00940"], "6505": ["0050"], "6919": ["0050"], "7769": ["0050"], 
-    "2059": ["0050"], "2344": ["0050"], "2376": ["0056", "00878"], 
-    "2324": ["0056", "00878", "00919", "00929", "00940"], 
-    "2356": ["0056", "00878", "00940"], "2385": ["0056", "00940"], 
-    "3034": ["0056", "00878", "00919", "00929", "00940"], "3702": ["0056", "00940"],
-    "4938": ["0056", "00929", "00940"], "3293": ["0056", "00878", "00940"], 
-    "2474": ["0056", "00878", "00940"], "3005": ["0056", "00940"], "2379": ["0056", "00878", "00940"], 
-    "2421": ["0056", "00940"], "6414": ["0056", "00940"], "3406": ["0056", "00919", "00940"],
-    "2439": ["0056", "00940"], "6188": ["0056", "00940"], "6285": ["0056", "00940"], 
-    "8016": ["0056", "00940"], "6139": ["0056", "00940"], "5269": ["0056", "00940"], 
-    "6196": ["0056", "00940"], "6239": ["0056", "00919", "00929", "00940"], "4958": ["00878", "00919"], 
-    "1402": ["00878"], "2912": ["00878", "00940"], "2609": ["00919"], "8209": ["00919"],
-    "6488": ["00929", "00940"], "2801": ["00940"], "9904": ["00940"], "1102": ["00940"], 
-    "4915": ["00940"], "2615": ["00940"], "1319": ["00940"], "3706": ["00940"], 
-    "6176": ["00940"], "1513": ["00940"], "2393": ["00940"], "6257": ["00940"]
-}
-
-def merge_etf_info(row):
-    c = str(row['code']).strip()
-    base_name = str(row['name']).strip()
-    if c in etf_db:
-        labels = " ".join([f"[{e}]" for e in etf_db[c]])
-        return f"{base_name} {labels}"
-    return base_name
-
-# ==========================================
-# 3. 獲取台股基礎資料 (加入嚴格防禦機制)
-# ==========================================
-@st.cache_data(ttl=3600)
-def get_stock_base_data_final():
-    cols = ['code', 'name', 'price', 'vol', 'trade_value', 'pe', 'industry', 'chip_ratio', 'value_billion']
-    empty_df = pd.DataFrame(columns=cols)
-
- df_price = pd.DataFrame()
-    try:
-        # 修正：繞過憑證與加上瀏覽器偽裝，排除阻擋
-        import urllib3
-        urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
-        hd = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'}
-        
-        res_p = requests.get("https://openapi.twse.com.tw/v1/exchangeReport/STOCK_DAY_ALL", headers=hd, timeout=15, verify=False)
-        if res_p.status_code == 200 and res_p.json():
-            res_json = res_p.json()
-            if isinstance(res_json, list) and len(res_json) > 0 and 'Code' in res_json[0]:
-                raw = pd.DataFrame(res_json)
-                df_price = raw[raw['Code'].str.len() == 4].copy()
-                df_price['price'] = pd.to_numeric(df_price['ClosingPrice'].str.replace(',', ''), errors='coerce')
-                df_price['vol'] = pd.to_numeric(df_price['TradeVolume'].str.replace(',', ''), errors='coerce') / 1000
-                df_price['trade_value'] = pd.to_numeric(df_price['TradeValue'].str.replace(',', ''), errors='coerce')
-                df_price = df_price[['Code', 'Name', 'price', 'vol', 'trade_value']].rename(columns={'Code': 'code', 'Name': 'name'})
-                df_price = df_price[~df_price['code'].str.startswith('91')] 
-            else:
-                st.sidebar.error("⚠️ 證交所股價 API 目前處於限流或維護狀態，請稍後再試。")
-    except Exception as e:
-        st.sidebar.error(f"⚠️ 股價API連線異常: {e}")
-
-    if df_price.empty:
-        return empty_df
-
-    df_pe = pd.DataFrame()
-    try:
-        res_pe = requests.get("https://openapi.twse.com.tw/v1/exchangeReport/BWIBBU_ALL", timeout=15)
-        if res_pe.status_code == 200 and res_pe.json():
-            res_pe_json = res_pe.json()
-            if isinstance(res_pe_json, list) and len(res_pe_json) > 0 and 'Code' in res_pe_json[0]:
-                raw_pe = pd.DataFrame(res_pe_json)
-                df_pe = raw_pe[['Code', 'PEratio']].rename(columns={'Code': 'code', 'PEratio': 'pe'})
-                df_pe['pe'] = pd.to_numeric(df_pe['pe'].str.replace(',', ''), errors='coerce')
-    except Exception:
-        pass
-
-    df_ind = pd.DataFrame()
-    try:
-        res_ind = requests.get("https://openapi.twse.com.tw/v1/opendata/t187ap03_L", timeout=15)
-        if res_ind.status_code == 200 and res_ind.json():
-            res_ind_json = res_ind.json()
-            if isinstance(res_ind_json, list) and len(res_ind_json) > 0 and '公司代號' in res_ind_json[0]:
-                raw_ind = pd.DataFrame(res_ind_json)
-                df_ind = raw_ind[['公司代號', '產業別']].rename(columns={'公司代號': 'code', '產業別': 'industry'})
-    except Exception:
-        pass
-
-    df_chips = pd.DataFrame()
-    headers = {'User-Agent': 'Mozilla/5.0'}
-    for i in range(7):
-        d_str = (datetime.datetime.now() - datetime.timedelta(days=i)).strftime("%Y%m%d")
-        url = f"https://www.twse.com.tw/rwd/zh/fund/T86?date={d_str}&selectType=ALLBUT0999&response=json"
-        try:
-            res = requests.get(url, headers=headers, timeout=10)
-            if res.status_code == 200 and "data" in res.json():
-                js = res.json()
-                if "fields" in js and "data" in js and js["data"]:
-                    df_raw = pd.DataFrame(js["data"], columns=[c.strip() for c in js["fields"]])
-                    fi_c = [c for c in df_raw.columns if '外資' in c and '買賣超' in c]
-                    it_c = [c for c in df_raw.columns if '投信' in c and '買賣超' in c]
-                    
-                    if fi_c and it_c:
-                        df_chips = pd.DataFrame()
-                        df_chips['code'] = df_raw['證券代號'].astype(str).str.strip()
-                        df_chips['fi'] = pd.to_numeric(df_raw[fi_c[0]].str.replace(',', ''), errors='coerce') / 1000
-                        df_chips['it'] = pd.to_numeric(df_raw[it_c[0]].str.replace(',', ''), errors='coerce') / 1000
-                        break
-        except Exception:
-            continue
-
-    if not df_chips.empty:
-        df = pd.merge(df_price, df_chips, on='code', how='left')
-    else:
-        df = df_price.copy()
-        df['fi'], df['it'] = 0.0, 0.0
-
-    df['fi'] = pd.to_numeric(df['fi'], errors='coerce').fillna(0.0)
-    df['it'] = pd.to_numeric(df['it'], errors='coerce').fillna(0.0)
-    df['vol'] = pd.to_numeric(df['vol'], errors='coerce').fillna(0.0)
-    df['trade_value'] = pd.to_numeric(df['trade_value'], errors='coerce').fillna(0.0)
-
-    net_chips = df['fi'] + df['it']
-    df['chip_ratio'] = (net_chips / df['vol'].replace(0, np.nan)).fillna(0.0) * 100
-    df['chip_ratio'] = df['chip_ratio'].clip(upper=100.0).round(2)
-    df['value_billion'] = (df['trade_value'] / 100000000).fillna(0.0).round(2)
-
-    if not df_pe.empty:
-        df = pd.merge(df, df_pe, on='code', how='left')
-    if 'pe' not in df.columns:
-        df['pe'] = np.nan
-
-    if not df_ind.empty:
-        df = pd.merge(df, df_ind, on='code', how='left')
-    df['industry'] = df['industry'].fillna('其他')
+# 3. 建立具備防阻擋與快取機制的資料抓取函式
+@st.cache_data(ttl=300)  # 資料快取 5 分鐘，避免頻繁抓取被證交所封鎖
+def fetch_stock_data():
+    url = "https://openapi.twse.com.tw/v1/exchangeReport/STOCK_DAY_ALL"
     
-    ind_map = {
-        "01": "水泥工業", "02": "食品工業", "03": "塑膠工業", "04": "紡織纖維", "05": "電機機械",
-        "06": "電器電欄", "07": "化學工業", "08": "生技醫療業", "09": "玻璃陶瓷", "10": "造紙工業",
-        "11": "鋼鐵工業", "12": "橡膠工業", "13": "汽車工業", "14": "建材營建", "15": "航運業",
-        "16": "觀光餐旅", "17": "金融保險", "18": "貿易百貨", "19": "綜合業", "20": "其他業",
-        "21": "化學工業", "22": "生技醫療業", "23": "油電燃氣業",
-        "24": "半導體業", "25": "電腦及週邊設備業", "26": "光電業", "27": "通信網路業", 
-        "28": "電子零組件業", "29": "電子通路業", "30": "資訊服務業", "31": "其他電子業",
-        "32": "文化創意業", "33": "農業科技業", "34": "電子商務業", "35": "綠能環保業",
-        "36": "數位雲端業", "37": "運動休閒業", "38": "居家生活業", "80": "建材營建"
+    # 完整瀏覽器偽裝標頭
+    hd = {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+        'Accept': 'application/json, text/plain, */*',
+        'Accept-Language': 'zh-TW,zh;q=0.9,en-US;q=0.8,en;q=0.7'
     }
-    df['industry'] = df['industry'].apply(lambda x: str(x).strip()[:-2] if str(x).strip().endswith('.0') else str(x).strip())
-    df['industry'] = df['industry'].apply(lambda x: x.zfill(2) if x.isdigit() else x)
-    df['industry'] = df['industry'].map(ind_map).fillna(df['industry'])
-    return df[cols]
-
-# ==========================================
-# 4. 批量獲取技術指標 (增強多維度相容)
-# ==========================================
-def batch_append_tech_indicators_fast(res_df):
-    res_df['回檔%'] = 0.0
-    res_df['今日漲幅%'] = 0.0
-    if res_df.empty:
-        return res_df
-        
-    codes = res_df['code'].tolist()
-    dd_map, chg_map = {}, {}
     
-    chunk_size = 35
-    for chunk_start in range(0, len(codes), chunk_size):
-        chunk_codes = codes[chunk_start:chunk_start + chunk_size]
-        ticker_list = [f"{str(c).strip()}.TW" for c in chunk_codes]
+    try:
+        # 發送請求，設定超時與忽略憑證驗證
+        res_p = requests.get(url, headers=hd, timeout=15, verify=False)
         
-        try:
-            data = yf.download(ticker_list, period="1mo", progress=False, timeout=15)
-            if data.empty:
-                continue
+        if res_p.status_code == 200:
+            data_json = res_p.json()
+            if data_json:
+                df = pd.DataFrame(data_json)
                 
-            if isinstance(data.columns, pd.MultiIndex):
-                if 'Close' in data.columns.levels[0] and 'High' in data.columns.levels[0]:
-                    df_close, df_high = data['Close'], data['High']
-                    for c in chunk_codes:
-                        tk = f"{c}.TW"
-                        if tk in df_close.columns and tk in df_high.columns:
-                            closes, highs = df_close[tk].dropna(), df_high[tk].dropna()
-                            if len(closes) >= 2 and len(highs) >= 1:
-                                h_max, cur, prev = float(highs.max()), float(closes.iloc[-1]), float(closes.iloc[-2])
-                                if h_max > 0: dd_map[c] = round(((h_max - cur) / h_max) * 100, 2)
-                                if prev > 0: chg_map[c] = round(((cur - prev) / prev) * 100, 2)
-            else:
-                if 'Close' in data.columns and 'High' in data.columns:
-                    closes, highs = data['Close'].dropna(), data['High'].dropna()
-                    if len(closes) >= 2 and len(highs) >= 1:
-                        h_max, cur, prev = float(highs.max()), float(closes.iloc[-1]), float(closes.iloc[-2])
-                        for c in chunk_codes:
-                            if h_max > 0: dd_map[c] = round(((h_max - cur) / h_max) * 100, 2)
-                            if prev > 0: chg_map[c] = round(((cur - prev) / prev) * 100, 2)
-        except Exception:
-            continue
-        
-    res_df['回檔%'] = res_df['code'].map(dd_map).fillna(0.0)
-    res_df['今日漲幅%'] = res_df['code'].map(chg_map).fillna(0.0)
-    return res_df
+                # 強制將文字型態的數據清除逗號並轉為數字，防止滑桿邏輯崩潰
+                numeric_cols = ['OpeningPrice', 'HighestPrice', 'LowestPrice', 'ClosingPrice', 'TradeVolume', 'TradeValue']
+                for col in numeric_cols:
+                    if col in df.columns:
+                        df[col] = pd.to_numeric(df[col].astype(str).str.replace(',', ''), errors='coerce')
+                
+                # 【雙向相容設計】同時產生中文與英文欄位名稱，確保任何策略皆可讀取
+                mapping = {
+                    'Code': '證券代號', 'Name': '證券名稱', 'OpeningPrice': '開盤價',
+                    'HighestPrice': '最高價', 'LowestPrice': '最低價', 'ClosingPrice': '收盤價',
+                    'TradeVolume': '成交股數', 'TradeValue': '成交金額', 'Change': '漲跌價差',
+                    'Transaction': '成交筆數'
+                }
+                for eng, chn in mapping.items():
+                    if eng in df.columns:
+                        df[chn] = df[eng]
+                        
+                return df, None
+        return pd.DataFrame(), f"HTTP 錯誤碼: {res_p.status_code}"
+    except Exception as e:
+        return pd.DataFrame(), str(e)
 
-# ==========================================
-# 5. 族群統計
-# ==========================================
-def display_industry_cluster_stats(df_target):
-    if not df_target.empty and '產業' in df_target.columns:
-        ind_counts = df_target['產業'].value_counts()
-        ind_counts = ind_counts[ind_counts >= 3] 
-        
-        if not ind_counts.empty:
-            stats_items = [f"{ind} ({count} 檔)" for ind, count in ind_counts.items()]
-            stats_string = "  \n".join(stats_items)
-            st.info(f"📋 **熱門族群並列統計 (≥3檔)：** \n{stats_string}")
-            st.write("") 
+# 4. 執行資料載入
+df_price, error_msg = fetch_stock_data()
 
-# ==========================================
-# 6. 主程式執行流
-# ==========================================
-try:
-    with st.spinner("正在同步全台股籌碼與盤後數據..."):
-        df_base = get_stock_base_data_final()
+# 5. 畫面呈現與異常診斷
+if error_msg:
+    st.error(f"❌ 股價API連線異常 (詳細原因: {error_msg})")
+    st.info("💡 提示：若持續出現此錯誤，代表您目前的網路環境（或雲端平台）被證交所伺服器嚴格阻擋，建議您可以嘗試更換網路環境、或稍後重新整理網頁。")
+elif df_price.empty:
+    st.warning("⚠️ 已成功連線，但證交所目前未回傳任何股票資料。")
+else:
+    # 側邊欄篩選器介面
+    st.sidebar.header("🔍 策略條件設定")
     
-    if df_base.empty:
-        st.warning("📅 暫時無法取得證交所開放資料，請稍後重新整理網頁。")
+    # 動態取得全市場最高股價，作為滑桿上限
+    valid_prices = df_price['收盤價'].dropna()
+    max_market_price = float(valid_prices.max()) if not valid_prices.empty else 1000.0
+    
+    # 數值設定為 50.0，且 step 精準設定為 1.0，澈底排除先前 step 的小數點衝突問題
+    price_cutoff = st.sidebar.slider(
+        "最低收盤價門檻 (元)",
+        min_value=0.0,
+        max_value=max_market_price,
+        value=50.0,  # 預設為您指定的 50
+        step=1.0,    # 整數步進，絕對不報錯
+        help="只顯示收盤價高於此數值的股票"
+    )
+    
+    # 成交量篩選（以張數為單位，1張 = 1,000股）
+    volume_cutoff_k = st.sidebar.slider(
+        "最低成交量 (張)",
+        min_value=0,
+        max_value=5000,
+        value=100,
+        step=50
+    )
+    volume_shares = volume_cutoff_k * 1000
+
+    # 6. 核心選股策略篩選
+    filtered_df = df_price[
+        (df_price['收盤價'] >= price_cutoff) & 
+        (df_price['成交股數'] >= volume_shares)
+    ]
+
+    # 7. 數據儀表板視覺化呈現
+    m1, m2 = st.columns(2)
+    with m1:
+        st.metric("當前市場總觀測股票數", f"{len(df_price)} 檔")
+    with m2:
+        st.metric("符合您策略的股票數", f"{len(filtered_df)} 檔")
+
+    st.subheader("📊 策略篩選結果列表")
+    
+    # 挑選要呈現在網頁上的乾淨欄位
+    display_cols = ['證券代號', '證券名稱', '開盤價', '最高價', '最低價', '收盤價', '成交股數']
+    available_cols = [c for c in display_cols if c in filtered_df.columns]
+    
+    if not filtered_df.empty:
+        # 呈現表格並自動放大至視窗寬度
+        st.dataframe(
+            filtered_df[available_cols].reset_index(drop=True), 
+            use_container_width=True
+        )
     else:
-        # 側邊欄控制區
-        with st.sidebar:
-            st.header("🎯 策略與條件選擇")
-            
-            strategy = st.radio(
-                "選擇選股策略",
-                ["🚀 近期強勢", "🛡️ 穩健長期投資", "🕵️ 主力支撐", "📉 回檔進場股"]
-            )
-            
-            st.markdown("---")
-            
-            with st.expander("⚙️ 大範圍過濾條件", expanded=False):
-                min_p = st.slider("最低股價", min_value=0.0, max_value=500.0, value=15.0, step=5.0)
-                # 💡 這裡修正完畢：將 step=50.5 改回 50.0，完美解決衝突
-                max_p = st.slider("最高股價", min_value=100.0, max_value=2000.0, value=1000.0, step=50.0)
-                min_v = st.slider("最低成交量(張)", min_value=0, max_value=10000, value=500, step=100)
-                pe_min, pe_max = st.slider("本益比合理區間", min_value=0.0, max_value=100.0, value=(8.0, 22.0), step=1.0)
-                target_industry = st.selectbox("選擇指定產業", options=["全部"] + sorted(list(df_base['industry'].unique())), index=0)
-
-        # 資料大範圍預先篩選
-        df_filtered = df_base[(df_base['price'] >= min_p) & (df_base['price'] <= max_p) & (df_base['vol'] >= min_v)].copy()
-        if target_industry != "全部":
-            df_filtered = df_filtered[df_filtered['industry'] == target_industry]
-
-        if not df_filtered.empty:
-            with st.spinner(f"正在分析 {len(df_filtered)} 檔符合條件標的之即時技術指標..."):
-                df_pool = batch_append_tech_indicators_fast(df_filtered)
-                
-                df_pool['支撐力道'] = "🟦"
-                df_pool.loc[df_pool['chip_ratio'] >= 10.0, '支撐力道'] = "🔥"
-                df_pool.loc[(df_pool['chip_ratio'] >= 4.0) & (df_pool['chip_ratio'] < 10.0), '支撐力道'] = "✅"
-                df_pool.loc[df_pool['chip_ratio'] < 0.0, '支撐力道'] = "📉"
-                df_pool['K線連結'] = df_pool['code'].apply(lambda x: f"https://tw.stock.yahoo.com/quote/{x}")
-        else:
-            df_pool = pd.DataFrame(columns=df_base.columns.tolist() + ['回檔%', '今日漲幅%', '支撐力道', 'K線連結'])
-
-        # 對接 ETF 標籤
-        if not df_pool.empty:
-            df_pool['name'] = df_pool.apply(merge_etf_info, axis=1)
-
-        # 重新命名與處理 None
-        df_display = df_pool.rename(columns={
-            'code': '代號', 'name': '名稱', 'industry': '產業', 'price': '股價', 
-            'chip_ratio': '集中度%', 'pe': '本益比', 'value_billion': '成交額(億)'
-        })
-        df_display['本益比'] = pd.to_numeric(df_display['本益比'], errors='coerce')
-        df_display['本益比原始'] = df_display['本益比'] 
-        df_display['本益比'] = df_display['本益比'].apply(lambda x: f"{x:.2f}" if pd.notnull(x) else "—")
-
-        cols_order = ['代號', '名稱', '產業', '今日漲幅%', '股價', '回檔%', '集中度%', '支撐力道', '成交額(億)', '本益比', 'K線連結']
-
-        # 4大策略篩選流
-        if not df_display.empty:
-            if strategy == "🚀 近期強勢":
-                df_final = df_display[df_display['今日漲幅%'] >= 0.5].sort_values(by='今日漲幅%', ascending=False).head(25)
-            elif strategy == "🛡️ 穩健長期投資":
-                df_final = df_display[(df_display['本益比原始'] >= pe_min) & (df_display['本益比原始'] <= pe_max)].sort_values(by='成交額(億)', ascending=False).head(25)
-            elif strategy == "🕵️ 主力支撐":
-                df_final = df_display[df_display['集中度%'] >= 2.0].sort_values(by='集中度%', ascending=False).head(25)
-            elif strategy == "📉 回檔進場股":
-                df_final = df_display[(df_display['回檔%'] >= 3.0) & (df_display['集中度%'] >= -2.0)].sort_values(by='回檔%', ascending=False).head(25) if '回檔%' in df_display.columns else df_display
-            else:
-                df_final = pd.DataFrame(columns=cols_order)
-        else:
-            df_final = pd.DataFrame(columns=cols_order)
-
-        # 欄位寬度與格式設定
-        grid_config = {
-            "代號": st.column_config.TextColumn("代號", width="small", pinned=True),  
-            "名稱": st.column_config.TextColumn("名稱", width=180, pinned=True),  
-            "產業": st.column_config.TextColumn("產業", width=115),  
-            "今日漲幅%": st.column_config.NumberColumn("今日漲幅%", format="%.2f %%", width="small"),
-            "股價": st.column_config.NumberColumn("股價", format="%.2f", width="small"),
-            "回檔%": st.column_config.NumberColumn("回檔%", format="%.2f %%", width="small"),
-            "集中度%": st.column_config.NumberColumn("集中度%", format="%.2f %%", width="small"),
-            "支撐力道": st.column_config.TextColumn("支撐力道", width="small"),
-            "成交額(億)": st.column_config.NumberColumn("成交額(億)", format="%.2f 億", width="small"),
-            "本益比": st.column_config.TextColumn("本益比", width="small"),
-            "K線連結": st.column_config.LinkColumn("K線", display_text="📈查看", width="small")
-        }
-
-        # 頂部全局快速搜尋
-        search_query = st.text_input("🔍 全局個股快速定位", placeholder="例如: 2330 或 台積電").strip()
-
-        if search_query and not df_display.empty:
-            st.markdown("### 🔍 全局搜尋結果")
-            search_mask = df_display['代號'].astype(str).str.contains(search_query, case=False, na=False) | \
-                          df_display['名稱'].astype(str).str.contains(search_query, case=False, na=False)
-            
-            df_search_show = df_display[search_mask][cols_order].copy()
-            st.dataframe(df_search_show, use_container_width=True, hide_index=True, column_config=grid_config)
-            st.markdown("---")
-
-        # 主畫面大表與族群並列統計
-        st.markdown(f"### 🎯 策略結果：{strategy}")
-        display_industry_cluster_stats(df_final)
-        
-        df_final_show = df_final[cols_order].copy()
-        st.dataframe(df_final_show, use_container_width=True, height=580, hide_index=True, column_config=grid_config)
-
-except Exception as e:
-    st.error(f"⚠️ 網頁系統執行異常: {e}")
+        st.info("💡 目前沒有股票符合此篩選條件，請嘗試調低側邊欄的股價或成交量門檻。")
