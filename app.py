@@ -66,57 +66,79 @@ def merge_etf_info(row):
     return base_name
 
 # ==========================================
-# 3. 獲取台股基礎資料 (證交所 Open API)
+# 3. 獲取台股基礎資料 (證交所 Open API) - 安全優化版
 # ==========================================
 @st.cache_data(ttl=3600)
 def get_stock_base_data_final():
     cols = ['code', 'name', 'price', 'vol', 'trade_value', 'pe', 'industry', 'chip_ratio', 'value_billion']
     empty_df = pd.DataFrame(columns=cols)
 
+    # 統一設定 Headers 模擬一般瀏覽器行為，防止被證交所防火牆直接封鎖
+    headers = {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+    }
+
     df_price = pd.DataFrame()
     try:
-        res_p = requests.get("https://openapi.twse.com.tw/v1/exchangeReport/STOCK_DAY_ALL", timeout=15)
-        if res_p.status_code == 200 and res_p.json():
-            raw = pd.DataFrame(res_p.json())
-            df_price = raw[raw['Code'].str.len() == 4].copy()
-            df_price['price'] = pd.to_numeric(df_price['ClosingPrice'].str.replace(',', ''), errors='coerce')
-            df_price['vol'] = pd.to_numeric(df_price['TradeVolume'].str.replace(',', ''), errors='coerce') / 1000
-            df_price['trade_value'] = pd.to_numeric(df_price['TradeValue'].str.replace(',', ''), errors='coerce')
-            df_price = df_price[['Code', 'Name', 'price', 'vol', 'trade_value']].rename(columns={'Code': 'code', 'Name': 'name'})
-            df_price = df_price[~df_price['code'].str.startswith('91')] 
+        # 1. 抓取每日股價
+        res_p = requests.get("https://openapi.twse.com.tw/v1/exchangeReport/STOCK_DAY_ALL", headers=headers, timeout=15)
+        if res_p.status_code == 200:
+            try:
+                res_p_json = res_p.json()
+                if res_p_json:
+                    raw = pd.DataFrame(res_p_json)
+                    df_price = raw[raw['Code'].str.len() == 4].copy()
+                    df_price['price'] = pd.to_numeric(df_price['ClosingPrice'].str.replace(',', ''), errors='coerce')
+                    df_price['vol'] = pd.to_numeric(df_price['TradeVolume'].str.replace(',', ''), errors='coerce') / 1000
+                    df_price['trade_value'] = pd.to_numeric(df_price['TradeValue'].str.replace(',', ''), errors='coerce')
+                    df_price = df_price[['Code', 'Name', 'price', 'vol', 'trade_value']].rename(columns={'Code': 'code', 'Name': 'name'})
+                    df_price = df_price[~df_price['code'].str.startswith('91')] 
+            except ValueError:
+                st.sidebar.error("⚠️ 股價 API 回傳了非 JSON 格式的內容（可能暫時遭證交所拒絕連線）。")
     except Exception as e:
-        st.sidebar.error(f"⚠️ 股價API異常: {e}")
+        st.sidebar.error(f"⚠️ 股價API連線異常: {e}")
 
     if df_price.empty:
         return empty_df
 
     df_pe = pd.DataFrame()
     try:
-        res_pe = requests.get("https://openapi.twse.com.tw/v1/exchangeReport/BWIBBU_ALL", timeout=15)
-        if res_pe.status_code == 200 and res_pe.json():
-            raw_pe = pd.DataFrame(res_pe.json())
-            df_pe = raw_pe[['Code', 'PEratio']].rename(columns={'Code': 'code', 'PEratio': 'pe'})
-            df_pe['pe'] = pd.to_numeric(df_pe['pe'].str.replace(',', ''), errors='coerce')
+        # 2. 抓取本益比
+        res_pe = requests.get("https://openapi.twse.com.tw/v1/exchangeReport/BWIBBU_ALL", headers=headers, timeout=15)
+        if res_pe.status_code == 200:
+            try:
+                res_pe_json = res_pe.json()
+                if res_pe_json:
+                    raw_pe = pd.DataFrame(res_pe_json)
+                    df_pe = raw_pe[['Code', 'PEratio']].rename(columns={'Code': 'code', 'PEratio': 'pe'})
+                    df_pe['pe'] = pd.to_numeric(df_pe['pe'].str.replace(',', ''), errors='coerce')
+            except ValueError:
+                pass
     except Exception:
         pass
 
     df_ind = pd.DataFrame()
     try:
-        res_ind = requests.get("https://openapi.twse.com.tw/v1/opendata/t187ap03_L", timeout=15)
-        if res_ind.status_code == 200 and res_ind.json():
-            raw_ind = pd.DataFrame(res_ind.json())
-            df_ind = raw_ind[['公司代號', '產業別']].rename(columns={'公司代號': 'code', '產業別': 'industry'})
+        # 3. 抓取產業別
+        res_ind = requests.get("https://openapi.twse.com.tw/v1/opendata/t187ap03_L", headers=headers, timeout=15)
+        if res_ind.status_code == 200:
+            try:
+                res_ind_json = res_ind.json()
+                if res_ind_json:
+                    raw_ind = pd.DataFrame(res_ind_json)
+                    df_ind = raw_ind[['公司代號', '產業別']].rename(columns={'公司代號': 'code', '產業別': 'industry'})
+            except ValueError:
+                pass
     except Exception:
         pass
 
     df_chips = pd.DataFrame()
-    headers = {'User-Agent': 'Mozilla/5.0'}
     for i in range(7):
         d_str = (datetime.datetime.now() - datetime.timedelta(days=i)).strftime("%Y%m%d")
         url = f"https://www.twse.com.tw/rwd/zh/fund/T86?date={d_str}&selectType=ALLBUT0999&response=json"
         try:
             res = requests.get(url, headers=headers, timeout=10)
-            if res.status_code == 200 and "data" in res.json():
+            if res.status_code == 200:
                 js = res.json()
                 if "fields" in js and "data" in js and js["data"]:
                     df_raw = pd.DataFrame(js["data"], columns=[c.strip() for c in js["fields"]])
