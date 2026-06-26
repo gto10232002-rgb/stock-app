@@ -73,9 +73,14 @@ def get_stock_base_data_final():
     cols = ['code', 'name', 'price', 'vol', 'trade_value', 'pe', 'industry', 'chip_ratio', 'value_billion']
     empty_df = pd.DataFrame(columns=cols)
 
-    df_price = pd.DataFrame()
+ df_price = pd.DataFrame()
     try:
-        res_p = requests.get("https://openapi.twse.com.tw/v1/exchangeReport/STOCK_DAY_ALL", timeout=15)
+        # 修正：繞過憑證與加上瀏覽器偽裝，排除阻擋
+        import urllib3
+        urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+        hd = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'}
+        
+        res_p = requests.get("https://openapi.twse.com.tw/v1/exchangeReport/STOCK_DAY_ALL", headers=hd, timeout=15, verify=False)
         if res_p.status_code == 200 and res_p.json():
             res_json = res_p.json()
             if isinstance(res_json, list) and len(res_json) > 0 and 'Code' in res_json[0]:
