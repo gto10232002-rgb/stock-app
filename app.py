@@ -270,7 +270,7 @@ try:
             
             with st.expander("⚙️ 大範圍過濾條件", expanded=False):
                 min_p = st.slider("最低股價", min_value=0.0, max_value=500.0, value=15.0, step=5.0)
-                max_p = st.slider("最高股價", min_value=100.0, max_value=2000.0, value=1000.0, step=50.0)
+                max_p = st.slider("最高股價", min_value=100.0, max_value=2000.0, value=1000.0, step=50.5)
                 min_v = st.slider("最低成交量(張)", min_value=0, max_value=10000, value=500, step=100)
                 pe_min, pe_max = st.slider("本益比合理區間", min_value=0.0, max_value=100.0, value=(8.0, 22.0), step=1.0)
                 target_industry = st.selectbox("選擇指定產業", options=["全部"] + sorted(list(df_base['industry'].unique())), index=0)
@@ -316,7 +316,8 @@ try:
             elif strategy == "🕵️ 主力支撐":
                 df_final = df_display[df_display['集中度%'] >= 2.0].sort_values(by='集中度%', ascending=False).head(25)
             elif strategy == "📉 回檔進場股":
-                df_final = df_display[(df_final['回檔%'] >= 3.0) & (df_final['集中度%'] >= -2.0)].sort_values(by='回檔%', ascending=False).head(25) if '回檔%' in df_display.columns else df_display
+                # 💡 這裡已修正：將原先打錯的 df_final 換回 df_display
+                df_final = df_display[(df_display['回檔%'] >= 3.0) & (df_display['集中度%'] >= -2.0)].sort_values(by='回檔%', ascending=False).head(25) if '回檔%' in df_display.columns else df_display
             else:
                 df_final = pd.DataFrame(columns=cols_order)
         else:
