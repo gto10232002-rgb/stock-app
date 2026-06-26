@@ -66,7 +66,7 @@ def merge_etf_info(row):
     return base_name
 
 # ==========================================
-# 3. 獲取台股基礎資料 (證交所 Open API)
+# 3. 獲取台股基礎資料 (加入嚴格防禦機制)
 # ==========================================
 @st.cache_data(ttl=3600)
 def get_stock_base_data_final():
@@ -77,15 +77,20 @@ def get_stock_base_data_final():
     try:
         res_p = requests.get("https://openapi.twse.com.tw/v1/exchangeReport/STOCK_DAY_ALL", timeout=15)
         if res_p.status_code == 200 and res_p.json():
-            raw = pd.DataFrame(res_p.json())
-            df_price = raw[raw['Code'].str.len() == 4].copy()
-            df_price['price'] = pd.to_numeric(df_price['ClosingPrice'].str.replace(',', ''), errors='coerce')
-            df_price['vol'] = pd.to_numeric(df_price['TradeVolume'].str.replace(',', ''), errors='coerce') / 1000
-            df_price['trade_value'] = pd.to_numeric(df_price['TradeValue'].str.replace(',', ''), errors='coerce')
-            df_price = df_price[['Code', 'Name', 'price', 'vol', 'trade_value']].rename(columns={'Code': 'code', 'Name': 'name'})
-            df_price = df_price[~df_price['code'].str.startswith('91')] 
+            res_json = res_p.json()
+            # 💡 防禦關鍵：確保回傳的是標準 List，且內含資料，防範證交所限流或噴錯
+            if isinstance(res_json, list) and len(res_json) > 0 and 'Code' in res_json[0]:
+                raw = pd.DataFrame(res_json)
+                df_price = raw[raw['Code'].str.len() == 4].copy()
+                df_price['price'] = pd.to_numeric(df_price['ClosingPrice'].str.replace(',', ''), errors='coerce')
+                df_price['vol'] = pd.to_numeric(df_price['TradeVolume'].str.replace(',', ''), errors='coerce') / 1000
+                df_price['trade_value'] = pd.to_numeric(df_price['TradeValue'].str.replace(',', ''), errors='coerce')
+                df_price = df_price[['Code', 'Name', 'price', 'vol', 'trade_value']].rename(columns={'Code': 'code', 'Name': 'name'})
+                df_price = df_price[~df_price['code'].str.startswith('91')] 
+            else:
+                st.sidebar.error("⚠️ 證交所股價 API 目前處於限流或維護狀態，請稍後再試。")
     except Exception as e:
-        st.sidebar.error(f"⚠️ 股價API異常: {e}")
+        st.sidebar.error(f"⚠️ 股價API連線異常: {e}")
 
     if df_price.empty:
         return empty_df
@@ -94,9 +99,11 @@ def get_stock_base_data_final():
     try:
         res_pe = requests.get("https://openapi.twse.com.tw/v1/exchangeReport/BWIBBU_ALL", timeout=15)
         if res_pe.status_code == 200 and res_pe.json():
-            raw_pe = pd.DataFrame(res_pe.json())
-            df_pe = raw_pe[['Code', 'PEratio']].rename(columns={'Code': 'code', 'PEratio': 'pe'})
-            df_pe['pe'] = pd.to_numeric(df_pe['pe'].str.replace(',', ''), errors='coerce')
+            res_pe_json = res_pe.json()
+            if isinstance(res_pe_json, list) and len(res_pe_json) > 0 and 'Code' in res_pe_json[0]:
+                raw_pe = pd.DataFrame(res_pe_json)
+                df_pe = raw_pe[['Code', 'PEratio']].rename(columns={'Code': 'code', 'PEratio': 'pe'})
+                df_pe['pe'] = pd.to_numeric(df_pe['pe'].str.replace(',', ''), errors='coerce')
     except Exception:
         pass
 
@@ -104,8 +111,10 @@ def get_stock_base_data_final():
     try:
         res_ind = requests.get("https://openapi.twse.com.tw/v1/opendata/t187ap03_L", timeout=15)
         if res_ind.status_code == 200 and res_ind.json():
-            raw_ind = pd.DataFrame(res_ind.json())
-            df_ind = raw_ind[['公司代號', '產業別']].rename(columns={'公司代號': 'code', '產業別': 'industry'})
+            res_ind_json = res_ind.json()
+            if isinstance(res_ind_json, list) and len(res_ind_json) > 0 and '公司代號' in res_ind_json[0]:
+                raw_ind = pd.DataFrame(res_ind_json)
+                df_ind = raw_ind[['公司代號', '產業別']].rename(columns={'公司代號': 'code', '產業別': 'industry'})
     except Exception:
         pass
 
@@ -174,7 +183,7 @@ def get_stock_base_data_final():
     return df[cols]
 
 # ==========================================
-# 4. 批量獲取技術指標
+# 4. 批量獲取技術指標 (增強多維度相容)
 # ==========================================
 def batch_append_tech_indicators_fast(res_df):
     res_df['回檔%'] = 0.0
@@ -207,6 +216,7 @@ def batch_append_tech_indicators_fast(res_df):
                                 if h_max > 0: dd_map[c] = round(((h_max - cur) / h_max) * 100, 2)
                                 if prev > 0: chg_map[c] = round(((cur - prev) / prev) * 100, 2)
             else:
+                # 💡 防禦機制：處理單一股票或被壓平的單層索引結構
                 if 'Close' in data.columns and 'High' in data.columns:
                     closes, highs = data['Close'].dropna(), data['High'].dropna()
                     if len(closes) >= 2 and len(highs) >= 1:
@@ -222,7 +232,7 @@ def batch_append_tech_indicators_fast(res_df):
     return res_df
 
 # ==========================================
-# 5. 族群統計（修正：標準 Markdown 換行結構）
+# 5. 族群統計（修正：首行完美換行結構）
 # ==========================================
 def display_industry_cluster_stats(df_target):
     if not df_target.empty and '產業' in df_target.columns:
@@ -230,10 +240,10 @@ def display_industry_cluster_stats(df_target):
         ind_counts = ind_counts[ind_counts >= 3] 
         
         if not ind_counts.empty:
-            # 💡 使用 Markdown 規範的雙空格加換行，確保垂直列表完美對齊
             stats_items = [f"{ind} ({count} 檔)" for ind, count in ind_counts.items()]
             stats_string = "  \n".join(stats_items)
             
+            # 💡 標題冒號後補齊「雙空格」加換行，強制 Markdown 精準空出首行
             st.info(f"📋 **熱門族群並列統計 (≥3檔)：** \n{stats_string}")
             st.write("") 
 
@@ -245,11 +255,9 @@ try:
         df_base = get_stock_base_data_final()
     
     if df_base.empty:
-        st.warning("📅 暫時無法取得證交所開放資料。")
+        st.warning("📅 暫時無法取得證交所開放資料，請稍後重新整理網頁。")
     else:
-        # ==========================================
         # 側邊欄控制區
-        # ==========================================
         with st.sidebar:
             st.header("🎯 策略與條件選擇")
             
@@ -276,7 +284,6 @@ try:
             with st.spinner(f"正在分析 {len(df_filtered)} 檔符合條件標的之即時技術指標..."):
                 df_pool = batch_append_tech_indicators_fast(df_filtered)
                 
-                # 💡【Bug 修正】：修正原「支支撑力道」拼字錯誤，確保正確上色
                 df_pool['支撐力道'] = "🟦"
                 df_pool.loc[df_pool['chip_ratio'] >= 10.0, '支撐力道'] = "🔥"
                 df_pool.loc[(df_pool['chip_ratio'] >= 4.0) & (df_pool['chip_ratio'] < 10.0), '支撐力道'] = "✅"
@@ -309,16 +316,16 @@ try:
             elif strategy == "🕵️ 主力支撐":
                 df_final = df_display[df_display['集中度%'] >= 2.0].sort_values(by='集中度%', ascending=False).head(25)
             elif strategy == "📉 回檔進場股":
-                df_final = df_display[(df_display['回檔%'] >= 3.0) & (df_display['集中度%'] >= -2.0)].sort_values(by='回檔%', ascending=False).head(25)
+                df_final = df_display[(df_final['回檔%'] >= 3.0) & (df_final['集中度%'] >= -2.0)].sort_values(by='回檔%', ascending=False).head(25) if '回檔%' in df_display.columns else df_display
             else:
                 df_final = pd.DataFrame(columns=cols_order)
         else:
             df_final = pd.DataFrame(columns=cols_order)
 
-        # 欄位寬度與格式設定
+        # 💡 欄位寬度與格式設定（加入 pinned=True 實現原生凍結）
         grid_config = {
-            "代號": st.column_config.TextColumn("代號", width="small"),  
-            "名稱": st.column_config.TextColumn("名稱", width=180),  
+            "代號": st.column_config.TextColumn("代號", width="small", pinned=True),  
+            "名稱": st.column_config.TextColumn("名稱", width=180, pinned=True),  
             "產業": st.column_config.TextColumn("產業", width=115),  
             "今日漲幅%": st.column_config.NumberColumn("今日漲幅%", format="%.2f %%", width="small"),
             "股價": st.column_config.NumberColumn("股價", format="%.2f", width="small"),
@@ -338,20 +345,19 @@ try:
             search_mask = df_display['代號'].astype(str).str.contains(search_query, case=False, na=False) | \
                           df_display['名稱'].astype(str).str.contains(search_query, case=False, na=False)
             
-            # 💡 將「代號、名稱」設定為 Index 達成橫向滾動凍結
-            df_search_show = df_display[search_mask][cols_order].copy().set_index(['代號', '名稱'])
-            st.dataframe(df_search_show, use_container_width=True, column_config=grid_config)
+            df_search_show = df_display[search_mask][cols_order].copy()
+            st.dataframe(df_search_show, use_container_width=True, hide_index=True, column_config=grid_config)
             st.markdown("---")
 
         # 主畫面大表與族群並列統計
         st.markdown(f"### 🎯 策略結果：{strategy}")
         
-        # 顯示已修正為垂直條列格式的族群統計
+        # 顯示已修正格式的族群統計
         display_industry_cluster_stats(df_final)
         
-        # 💡 將「代號、名稱」轉換成表格索引，鎖定最左側，高度 580 鎖定頂部標頭
-        df_final_show = df_final[cols_order].copy().set_index(['代號', '名稱'])
-        st.dataframe(df_final_show, use_container_width=True, height=580, column_config=grid_config)
+        # 💡 用普通 Dataframe 傳入並透過 hide_index=True 隱藏流水號，配合 pinned=True 完美解鎖凍結效果
+        df_final_show = df_final[cols_order].copy()
+        st.dataframe(df_final_show, use_container_width=True, height=580, hide_index=True, column_config=grid_config)
 
 except Exception as e:
     st.error(f"⚠️ 網頁系統執行異常: {e}")
