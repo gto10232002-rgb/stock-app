@@ -394,19 +394,19 @@ try:
         else:
             df_final = pd.DataFrame(columns=cols_order)
 
-        # 欄位寬度與格式設定
+        # 🛠️ 【優化亮點】調整數據欄位為合理寬度像素，確保啟動左右捲動軸以活化「凍結功能」
         grid_config = {
-            "代號": st.column_config.TextColumn("代號", width="small", pinned=True),  
+            "代號": st.column_config.TextColumn("代號", width=90, pinned=True),  
             "名稱": st.column_config.TextColumn("名稱", width=180, pinned=True),  
             "產業": st.column_config.TextColumn("產業", width=115),  
-            "今日漲幅%": st.column_config.NumberColumn("今日漲幅%", format="%.2f %%", width="small"),
-            "股價": st.column_config.NumberColumn("股價", format="%.2f", width="small"),
-            "回檔%": st.column_config.NumberColumn("回檔%", format="%.2f %%", width="small"),
-            "集中度%": st.column_config.NumberColumn("集中度%", format="%.2f %%", width="small"),
-            "支撐力道": st.column_config.TextColumn("支撐力道", width="small"),
-            "成交額(億)": st.column_config.NumberColumn("成交額(億)", format="%.2f 億", width="small"),
-            "本益比": st.column_config.TextColumn("本益比", width="small"),
-            "K線連結": st.column_config.LinkColumn("K線", display_text="📈查看", width="small")
+            "今日漲幅%": st.column_config.NumberColumn("今日漲幅%", format="%.2f %%", width=110),
+            "股價": st.column_config.NumberColumn("股價", format="%.2f", width=90),
+            "回檔%": st.column_config.NumberColumn("回檔%", format="%.2f %%", width=110),
+            "集中度%": st.column_config.NumberColumn("集中度%", format="%.2f %%", width=110),
+            "支撐力道": st.column_config.TextColumn("支撐力道", width=90),
+            "成交額(億)": st.column_config.NumberColumn("成交額(億)", format="%.2f 億", width=120),
+            "本益比": st.column_config.TextColumn("本益比", width=90),
+            "K線連結": st.column_config.LinkColumn("K線", display_text="📈查看", width=90)
         }
 
         # 頂部全局快速搜尋
