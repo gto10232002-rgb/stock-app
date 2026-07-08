@@ -4,8 +4,6 @@ import requests
 import datetime
 import yfinance as yf
 import numpy as np
-# 💡 引入第三方進階表格元件與 JS 渲染器
-from st_aggrid import AgGrid, GridOptionsBuilder, JsCode, ColumnsAutoSizeMode
 
 # ==========================================
 # 1. 頁面配置與 CSS 樣式微調
@@ -20,7 +18,7 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
-st.markdown("### 📊 台股多元策略選股系統 (安全升級 + 雙欄凍結版)")
+st.markdown("### 📊 台股多元策略選股系統 (官方原生凍結 + 邏輯全面修正版)")
 st.caption("📌 關盤資訊會在每日 18:30 之後導入")
 
 # ==========================================
@@ -91,7 +89,7 @@ def merge_etf_info(row):
 # ==========================================
 # 3. 獲取台股基礎資料
 # ==========================================
-@st.cache_data(ttl=3600)
+@st.cache_data(ttl=600)  # 💡 縮短快取時間到10分鐘，避免錯誤數據卡死
 def get_stock_base_data_final():
     cols = ['code', 'name', 'price', 'vol', 'trade_value', 'pe', 'industry', 'chip_ratio', 'value_billion']
     empty_df = pd.DataFrame(columns=cols)
@@ -129,7 +127,6 @@ def get_stock_base_data_final():
                 fallback_records = []
                 for c in backup_codes:
                     tk = f"{c}.TW"
-                    # 💡 備援機制同步引入嚴格欄位檢查
                     has_tk = tk in data.columns.levels[0] if isinstance(data.columns, pd.MultiIndex) else tk in data
                     if has_tk:
                         df_s = data[tk]
@@ -243,9 +240,10 @@ def get_stock_base_data_final():
     return df[cols]
 
 # ==========================================
-# 4. 批量獲取技術指標 (🛡️ 鐵腕防禦型重構版)
+# 4. 批量獲取技術指標 (🛡️ 徹底重構隔離防禦)
 # ==========================================
 def batch_append_tech_indicators_fast(res_df):
+    # 💡 每次進來都強制給予 0.0 作為預設初始值，絕不沿用舊的
     res_df['回檔%'] = 0.0
     res_df['今日漲幅%'] = 0.0
     if res_df.empty:
@@ -266,11 +264,17 @@ def batch_append_tech_indicators_fast(res_df):
                 
             for c in chunk_codes:
                 tk = f"{c}.TW"
-                # 🔥 核心防禦：先嚴格確認這個 Ticker 存不存在於 yfinance 回傳的 DataFrame 結構中
-                is_valid_ticker = tk in data.columns.levels[0] if isinstance(data.columns, pd.MultiIndex) else tk in data
                 
-                if is_valid_ticker:
-                    df_stock = data[tk]
+                # 🔥 鐵腕多重結構確認
+                is_valid = false
+                if isinstance(data.columns, pd.MultiIndex):
+                    is_valid = tk in data.columns.levels[0]
+                else:
+                    # 如果被降維，只有在 ticker_list 只有一檔且欄位名稱對齊時才放行
+                    is_valid = (len(ticker_list) == 1 and tk in data.columns)
+                
+                if is_valid:
+                    df_stock = data[tk] if isinstance(data.columns, pd.MultiIndex) else data
                     if 'Close' in df_stock.columns and 'High' in df_stock.columns:
                         closes = df_stock['Close'].dropna()
                         highs = df_stock['High'].dropna()
@@ -283,7 +287,6 @@ def batch_append_tech_indicators_fast(res_df):
                                 dd_map[c] = round(((h_max - cur) / h_max) * 100, 2)
                             if prev > 0: 
                                 chg_map[c] = round(((cur - prev) / prev) * 100, 2)
-                # 💡 如果 yfinance 沒有這一檔或格式被降維壓縮，直接跳過它，絕對不拿別人的數據頂替！
         except Exception:
             continue
         
@@ -305,54 +308,45 @@ def display_industry_cluster_stats(df_target):
             st.write("") 
 
 # ==========================================
-# ⚙️ 🛠️ AG Grid 專業級雙欄位凍結渲染器
+# ⚙️ 🛠️ 【全新核心】Streamlit 官方原生雙欄位凍結函數
 # ==========================================
-def render_ag_grid(df_data, height=500):
+def render_native_frozen_grid(df_data, height=500):
     if df_data.empty:
         st.warning("📭 目前沒有符合條件的資料可供顯示。")
         return
 
-    gb = GridOptionsBuilder.from_dataframe(df_data)
-    gb.configure_default_column(resizable=True, filterable=True, sortable=True)
-    
-    # ❄️ 【實現凍結視窗】將「代號」與「名稱」同時固定在左側
-    gb.configure_column("代號", pinned="left", width=90, cellStyle={'font-weight': 'bold', 'background-color': '#f8f9fa'})
-    gb.configure_column("名稱", pinned="left", width=220, cellStyle={'font-weight': 'bold', 'background-color': '#f8f9fa'})
-    
-    # 📊 其他常規欄位的寬度與資料格式微調
-    gb.configure_column("產業", width=120)
-    gb.configure_column("今日漲幅%", width=110, valueFormatter="x ? x.toFixed(2) + ' %' : '-'")
-    gb.configure_column("股價", width=90, valueFormatter="x ? x.toFixed(2) : '-'")
-    gb.configure_column("回檔%", width=110, valueFormatter="x ? x.toFixed(2) + ' %' : '-'")
-    gb.configure_column("集中度%", width=110, valueFormatter="x ? x.toFixed(2) + ' %' : '-'")
-    gb.configure_column("支撐力道", width=90, cellStyle={'text-align': 'center'})
-    gb.configure_column("成交額(億)", width=120, valueFormatter="x ? x.toFixed(2) + ' 億' : '-'")
-    gb.configure_column("本益比", width=90, cellStyle={'text-align': 'center'})
-    
-    # 🔗 利用 JavaScript 渲染 K 線超連結標籤
-    link_cell_renderer = JsCode("""
-    function(params) {
-        if (!params.value) return '';
-        return `<a href="${params.value}" target="_blank" style="text-decoration: none; color: #ff4b4b; font-weight: bold;">📈 查看</a>`;
+    # 1. 為了能凍結欄位，我們必須把要凍結的欄位設為 Pandas 的 Index
+    # 這裡將「代號」與「名稱」同時設為 Index
+    df_frozen = df_data.set_index(['代號', '名稱'])
+
+    # 2. 設定 Streamlit 欄位格式與超連結配置
+    column_config = {
+        "今日漲幅%": st.column_config.NumberColumn("今日漲幅%", format="%.2f %%"),
+        "股價": st.column_config.NumberColumn("股價", format="%.2f"),
+        "回檔%": st.column_config.NumberColumn("回檔%", format="%.2f %%"),
+        "集中度%": st.column_config.NumberColumn("集中度%", format="%.2f %%"),
+        "成交額(億)": st.column_config.NumberColumn("成交額(億)", format="%.2f 億"),
+        "K線連結": st.column_config.LinkColumn("K線連結", text="📈 查看")
     }
-    """)
-    gb.configure_column("K線連結", headerName="K線", cellRenderer=link_cell_renderer, width=90)
-    
-    grid_options = gb.build()
-    
-    AgGrid(
-        df_data,
-        gridOptions=grid_options,
+
+    # 3. 使用 Streamlit 原生最強的 st.dataframe 進行渲染
+    # 📌 當 Pandas Dataframe 的 Index 是複數時，Streamlit 網頁前端會自動將 Index 固定（凍結）在最左側！
+    st.dataframe(
+        df_frozen,
         height=height,
-        allow_unsafe_jscode=True,  # 必須開啟以載入 JsCode
-        columns_auto_size_mode=ColumnsAutoSizeMode.NONE,
-        theme="alpine"
+        use_container_width=True,
+        column_config=column_config
     )
 
 # ==========================================
 # 6. 主程式執行流
 # ==========================================
 try:
+    # 💡 在側邊欄放一個強制手動重新整理按鈕，可用來清空過期 Cache
+    if st.sidebar.button("♻️ 強制刷新數據 (清空舊快取)"):
+        st.cache_data.clear()
+        st.rerun()
+
     with st.spinner("正在同步全台股籌碼與盤後數據..."):
         df_base = get_stock_base_data_final()
     
@@ -423,15 +417,15 @@ try:
                           df_display['名稱'].astype(str).str.contains(search_query, case=False, na=False)
             df_search_show = df_display[search_mask][cols_order]
             
-            # 使用新表格元件渲染搜尋結果
-            render_ag_grid(df_search_show, height=220)
+            # 使用原生配置渲染
+            render_native_frozen_grid(df_search_show, height=220)
             st.markdown("---")
 
         st.markdown(f"### 🎯 策略結果：{strategy}")
         display_industry_cluster_stats(df_final)
         
-        # 使用新表格元件渲染主要的策略選股結果
-        render_ag_grid(df_final[cols_order], height=580)
+        # 使用原生配置渲染主要的策略選股結果
+        render_native_frozen_grid(df_final[cols_order], height=580)
 
 except Exception as e:
     st.error(f"⚠️ 網頁系統執行異常: {e}")
