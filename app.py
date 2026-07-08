@@ -18,7 +18,7 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
-st.markdown("### 📊 台股多元策略選股系統 (官方原生凍結 + 邏輯全面修正版)")
+st.markdown("### 📊 台股多元策略選股系統 (官方原生凍結 + 語法修正版)")
 st.caption("📌 關盤資訊會在每日 18:30 之後導入")
 
 # ==========================================
@@ -89,7 +89,7 @@ def merge_etf_info(row):
 # ==========================================
 # 3. 獲取台股基礎資料
 # ==========================================
-@st.cache_data(ttl=600)  # 💡 縮短快取時間到10分鐘，避免錯誤數據卡死
+@st.cache_data(ttl=300)  # 快取改為 5 分鐘
 def get_stock_base_data_final():
     cols = ['code', 'name', 'price', 'vol', 'trade_value', 'pe', 'industry', 'chip_ratio', 'value_billion']
     empty_df = pd.DataFrame(columns=cols)
@@ -240,10 +240,9 @@ def get_stock_base_data_final():
     return df[cols]
 
 # ==========================================
-# 4. 批量獲取技術指標 (🛡️ 徹底重構隔離防禦)
+# 4. 批量獲取技術指標 (🛡️ 語法修正防禦版)
 # ==========================================
 def batch_append_tech_indicators_fast(res_df):
-    # 💡 每次進來都強制給予 0.0 作為預設初始值，絕不沿用舊的
     res_df['回檔%'] = 0.0
     res_df['今日漲幅%'] = 0.0
     if res_df.empty:
@@ -257,7 +256,6 @@ def batch_append_tech_indicators_fast(res_df):
         chunk_codes = codes[chunk_start:chunk_start + chunk_size]
         ticker_list = [f"{str(c).strip()}.TW" for c in chunk_codes]
         try:
-            # 💡 加上 group_by='ticker' 規範格式
             data = yf.download(ticker_list, period="1mo", progress=False, group_by='ticker', timeout=15)
             if data.empty:
                 continue
@@ -265,12 +263,11 @@ def batch_append_tech_indicators_fast(res_df):
             for c in chunk_codes:
                 tk = f"{c}.TW"
                 
-                # 🔥 鐵腕多重結構確認
-                is_valid = false
+                # 💡 修正處：將大寫修正為 Python 標準的 False
+                is_valid = False
                 if isinstance(data.columns, pd.MultiIndex):
                     is_valid = tk in data.columns.levels[0]
                 else:
-                    # 如果被降維，只有在 ticker_list 只有一檔且欄位名稱對齊時才放行
                     is_valid = (len(ticker_list) == 1 and tk in data.columns)
                 
                 if is_valid:
@@ -308,19 +305,17 @@ def display_industry_cluster_stats(df_target):
             st.write("") 
 
 # ==========================================
-# ⚙️ 🛠️ 【全新核心】Streamlit 官方原生雙欄位凍結函數
+# ⚙️ 🛠️ 【全新完美版】官方原生直接凍結配置函數
 # ==========================================
-def render_native_frozen_grid(df_data, height=500):
+def render_native_frozen_grid_final(df_data, height=500):
     if df_data.empty:
         st.warning("📭 目前沒有符合條件的資料可供顯示。")
         return
 
-    # 1. 為了能凍結欄位，我們必須把要凍結的欄位設為 Pandas 的 Index
-    # 這裡將「代號」與「名稱」同時設為 Index
-    df_frozen = df_data.set_index(['代號', '名稱'])
-
-    # 2. 設定 Streamlit 欄位格式與超連結配置
+    # 💡 終極解法：直接在 column_config 裡面對想要鎖定的欄位加上 pinned=True 即可！
     column_config = {
+        "代號": st.column_config.TextColumn("代號", pinned=True, width="small"),
+        "名稱": st.column_config.TextColumn("名稱", pinned=True, width="medium"),
         "今日漲幅%": st.column_config.NumberColumn("今日漲幅%", format="%.2f %%"),
         "股價": st.column_config.NumberColumn("股價", format="%.2f"),
         "回檔%": st.column_config.NumberColumn("回檔%", format="%.2f %%"),
@@ -329,20 +324,19 @@ def render_native_frozen_grid(df_data, height=500):
         "K線連結": st.column_config.LinkColumn("K線連結", text="📈 查看")
     }
 
-    # 3. 使用 Streamlit 原生最強的 st.dataframe 進行渲染
-    # 📌 當 Pandas Dataframe 的 Index 是複數時，Streamlit 網頁前端會自動將 Index 固定（凍結）在最左側！
+    # 隱藏預設的 0,1,2 索引流水號，讓畫面最乾淨
     st.dataframe(
-        df_frozen,
+        df_data,
         height=height,
         use_container_width=True,
-        column_config=column_config
+        column_config=column_config,
+        hide_index=True
     )
 
 # ==========================================
 # 6. 主程式執行流
 # ==========================================
 try:
-    # 💡 在側邊欄放一個強制手動重新整理按鈕，可用來清空過期 Cache
     if st.sidebar.button("♻️ 強制刷新數據 (清空舊快取)"):
         st.cache_data.clear()
         st.rerun()
@@ -417,15 +411,15 @@ try:
                           df_display['名稱'].astype(str).str.contains(search_query, case=False, na=False)
             df_search_show = df_display[search_mask][cols_order]
             
-            # 使用原生配置渲染
-            render_native_frozen_grid(df_search_show, height=220)
+            # 使用原生全新配置渲染
+            render_native_frozen_grid_final(df_search_show, height=220)
             st.markdown("---")
 
         st.markdown(f"### 🎯 策略結果：{strategy}")
         display_industry_cluster_stats(df_final)
         
-        # 使用原生配置渲染主要的策略選股結果
-        render_native_frozen_grid(df_final[cols_order], height=580)
+        # 使用原生全新配置渲染
+        render_native_frozen_grid_final(df_final[cols_order], height=580)
 
 except Exception as e:
     st.error(f"⚠️ 網頁系統執行異常: {e}")
