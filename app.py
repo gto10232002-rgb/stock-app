@@ -353,6 +353,17 @@ def render_native_frozen_grid_final(df_data, height=500):
         st.warning("📭 目前沒有符合條件的資料可供顯示。")
         return
 
+    def build_link_column():
+        # 不同版本 Streamlit 的「顯示文字」參數名稱不一致：
+        # 新版是 display_text，舊版可能是 text，更舊的版本兩者都不支援。
+        # 依序嘗試，全部失敗才退回沒有自訂顯示文字的陽春版本。
+        for kwargs in ({"display_text": "📈 查看"}, {"text": "📈 查看"}, {}):
+            try:
+                return st.column_config.LinkColumn("K線連結", **kwargs)
+            except TypeError:
+                continue
+        return st.column_config.LinkColumn("K線連結")
+
     def build_column_config(with_pin: bool):
         pin_kwargs = {"pinned": True} if with_pin else {}
         return {
@@ -363,7 +374,7 @@ def render_native_frozen_grid_final(df_data, height=500):
             "回檔%": st.column_config.NumberColumn("回檔%", format="%.2f %%"),
             "集中度%": st.column_config.NumberColumn("集中度%", format="%.2f %%"),
             "成交額(億)": st.column_config.NumberColumn("成交額(億)", format="%.2f 億"),
-            "K線連結": st.column_config.LinkColumn("K線連結", text="📈 查看")
+            "K線連結": build_link_column()
         }
 
     try:
