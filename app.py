@@ -353,6 +353,14 @@ def render_native_frozen_grid_final(df_data, height=500):
         st.warning("📭 目前沒有符合條件的資料可供顯示。")
         return
 
+    # [修正] Streamlit 官方已知 bug (GitHub issue #10385)：
+    # column_config 的 pinned=True 與 hide_index=True 同時使用時會互相衝突，
+    # 導致凍結欄位連同索引欄位一起顯示異常(出現空白欄位、代號/名稱不見)。
+    # workaround：不用 hide_index=True，而是把索引清空成空字串，
+    # 並把索引欄位本身也一起 pinned，視覺上等同於「隱藏索引」且欄位凍結正常生效。
+    df_data = df_data.reset_index(drop=True)
+    df_data.index = [""] * len(df_data)
+
     def build_link_column():
         # 不同版本 Streamlit 的「顯示文字」參數名稱不一致：
         # 新版是 display_text，舊版可能是 text，更舊的版本兩者都不支援。
@@ -366,7 +374,8 @@ def render_native_frozen_grid_final(df_data, height=500):
 
     def build_column_config(with_pin: bool):
         pin_kwargs = {"pinned": True} if with_pin else {}
-        return {
+        config = {
+            "_index": st.column_config.Column("", width="small", **pin_kwargs),
             "代號": st.column_config.TextColumn("代號", width="small", **pin_kwargs),
             "名稱": st.column_config.TextColumn("名稱", width="medium", **pin_kwargs),
             "今日漲幅%": st.column_config.NumberColumn("今日漲幅%", format="%.2f %%"),
@@ -376,6 +385,7 @@ def render_native_frozen_grid_final(df_data, height=500):
             "成交額(億)": st.column_config.NumberColumn("成交額(億)", format="%.2f 億"),
             "K線連結": build_link_column()
         }
+        return config
 
     try:
         column_config = build_column_config(with_pin=True)
@@ -384,7 +394,7 @@ def render_native_frozen_grid_final(df_data, height=500):
             height=height,
             use_container_width=True,
             column_config=column_config,
-            hide_index=True
+            hide_index=False
         )
     except TypeError:
         if not st.session_state.get("_pin_warned", False):
