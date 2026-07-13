@@ -303,13 +303,24 @@ def _fetch_one_chunk(chunk_codes):
 def fetch_tech_indicators_cached(codes_tuple):
     codes = list(codes_tuple)
     dd_map, chg_map = {}, {}
-    chunk_size = 50  # 原本 35，加大分組以減少 API 呼叫次數
+    chunk_size = 50
     chunks = [codes[i:i + chunk_size] for i in range(0, len(codes), chunk_size)]
 
-    with ThreadPoolExecutor(max_workers=4) as executor:
-        futures = [executor.submit(_fetch_one_chunk, chunk) for chunk in chunks]
-        for future in as_completed(futures):
-            d, c = future.result()
+    # [效率優化 + 穩定性] 併發數調降為 2，避免在記憶體有限的雲端環境
+    # (例如 Streamlit Community Cloud 免費方案僅 1GB RAM) 同時開太多執行緒
+    # 導致整個 app process 被系統砍掉(呈現「Oh no. Error running app」)。
+    # 若平行處理仍失敗，自動退回逐一序列處理，確保功能不中斷。
+    try:
+        with ThreadPoolExecutor(max_workers=2) as executor:
+            futures = [executor.submit(_fetch_one_chunk, chunk) for chunk in chunks]
+            for future in as_completed(futures):
+                d, c = future.result()
+                dd_map.update(d)
+                chg_map.update(c)
+    except Exception:
+        dd_map, chg_map = {}, {}
+        for chunk in chunks:
+            d, c = _fetch_one_chunk(chunk)
             dd_map.update(d)
             chg_map.update(c)
 
@@ -396,18 +407,22 @@ def render_native_frozen_grid_final(df_data, height=500):
             column_config=column_config,
             hide_index=False
         )
-    except TypeError:
+    except Exception:
         if not st.session_state.get("_pin_warned", False):
-            st.sidebar.warning("⚠️ 目前 Streamlit 版本較舊，不支援欄位凍結(pinned)，已自動改為一般表格顯示。建議升級 streamlit>=1.36。")
+            st.sidebar.warning("⚠️ 目前 Streamlit 版本不支援欄位凍結(pinned)，已自動改為一般表格顯示。建議升級 streamlit>=1.36。")
             st.session_state["_pin_warned"] = True
-        column_config = build_column_config(with_pin=False)
-        st.dataframe(
-            df_data,
-            height=height,
-            use_container_width=True,
-            column_config=column_config,
-            hide_index=True
-        )
+        try:
+            column_config = build_column_config(with_pin=False)
+            st.dataframe(
+                df_data,
+                height=height,
+                use_container_width=True,
+                column_config=column_config,
+                hide_index=True
+            )
+        except Exception:
+            # 最終保底：連 column_config 都失敗時，至少確保表格本身能正常顯示
+            st.dataframe(df_data, height=height, use_container_width=True, hide_index=True)
 
 # ==========================================
 # 6. 主程式執行流
