@@ -19,7 +19,7 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
-st.markdown("### 📊 台股多元策略選股系統 (官方原生凍結 + 語法修正版)")
+st.markdown("### 📊 台股多元策略選股系統")
 st.caption("📌 關盤資訊會在每日 18:30 之後導入")
 
 # ==========================================
@@ -474,6 +474,11 @@ def render_native_frozen_grid_final(df_data, height=500):
         </table>
     </div>
     """
+    # [修正] Markdown 語法規則：每行開頭若有 4 個以上空白會被視為「程式碼區塊」，
+    # 即使加了 unsafe_allow_html=True 也一樣會被當純文字印出、不會被解析成 HTML。
+    # 因為這段 f-string 是寫在函式內部、每行自帶縮排，剛好踩到這個規則。
+    # 這裡把每一行前導空白去掉，確保不會被誤判成程式碼區塊。
+    table_html = "\n".join(line.lstrip() for line in table_html.strip("\n").split("\n"))
     st.markdown(table_html, unsafe_allow_html=True)
 
 # ==========================================
