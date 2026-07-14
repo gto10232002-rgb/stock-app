@@ -353,76 +353,128 @@ def display_industry_cluster_stats(df_target):
             st.write("")
 
 # ==========================================
-# ⚙️ 官方原生直接凍結配置函數
-# [修正] "代號"/"名稱" 凍結功能維持不變；但 pinned 參數需要較新版 Streamlit
-# (約 1.36+) 才支援，舊版會直接丟 TypeError 讓整頁掛掉。
-# 這裡改成：優先嘗試凍結欄位，若目前環境的 Streamlit 版本不支援 pinned，
-# 才自動退回「不凍結」的版本，並提示使用者，而不是讓整頁跳錯。
+# ⚙️ 自製 HTML/CSS 凍結表格(取代 st.dataframe 的 pinned)
+# [修正] 實測發現使用者部署環境的 Streamlit 版本雖然「接受」pinned 參數
+# 不會報錯，但實際上完全不會產生凍結效果(等於被靜默忽略)，且與
+# hide_index 交互作用還會多長出一欄空白欄位。這是 Streamlit 版本相關的
+# 底層限制，無法單純靠調整 column_config 參數解決。
+# 因此改為完全不依賴 st.dataframe/column_config，改用純 HTML + CSS
+# 的 position:sticky 自建表格。這是純網頁技術，跟 Streamlit 版本無關，
+# 保證「代號」「名稱」兩欄一定會固定在左側，橫向捲動時不會跑掉。
+# 缺點：會失去 st.dataframe 原生的排序/全螢幕/下載小工具列，但換來
+# 凍結功能 100% 穩定生效。
 # ==========================================
+import html as _html_lib
+
+_FROZEN_TABLE_CSS = """
+<style>
+.frozen-table-wrap {
+    overflow: auto;
+    border: 1px solid #e6e6e6;
+    border-radius: 6px;
+}
+.frozen-table {
+    border-collapse: collapse;
+    width: max-content;
+    min-width: 100%;
+    font-size: 14px;
+}
+.frozen-table th, .frozen-table td {
+    padding: 6px 12px;
+    border-bottom: 1px solid #eee;
+    white-space: nowrap;
+    text-align: center;
+}
+.frozen-table thead th {
+    position: sticky;
+    top: 0;
+    background: #f0f2f6;
+    z-index: 2;
+}
+.frozen-table td.pin1, .frozen-table th.pin1 {
+    position: sticky;
+    left: 0;
+    background: #ffffff;
+}
+.frozen-table td.pin2, .frozen-table th.pin2 {
+    position: sticky;
+    left: 64px;
+    background: #ffffff;
+}
+.frozen-table thead th.pin1, .frozen-table thead th.pin2 {
+    background: #f0f2f6;
+    z-index: 3;
+}
+.frozen-table tbody tr:hover td {
+    background: #f7f9fc;
+}
+.frozen-table tbody tr:hover td.pin1,
+.frozen-table tbody tr:hover td.pin2 {
+    background: #eef2f9;
+}
+.frozen-table a {
+    text-decoration: none;
+}
+</style>
+"""
+
+def _format_cell(col, val):
+    pct_cols = ("今日漲幅%", "回檔%", "集中度%")
+    if pd.isna(val):
+        return "—"
+    try:
+        if col in pct_cols:
+            return f"{float(val):.2f} %"
+        if col == "股價":
+            return f"{float(val):.2f}"
+        if col == "成交額(億)":
+            return f"{float(val):.2f} 億"
+    except (TypeError, ValueError):
+        return "—"
+    return str(val)
+
 def render_native_frozen_grid_final(df_data, height=500):
     if df_data.empty:
         st.warning("📭 目前沒有符合條件的資料可供顯示。")
         return
 
-    # [修正] Streamlit 官方已知 bug (GitHub issue #10385)：
-    # column_config 的 pinned=True 與 hide_index=True 同時使用時會互相衝突，
-    # 導致凍結欄位連同索引欄位一起顯示異常(出現空白欄位、代號/名稱不見)。
-    # workaround：不用 hide_index=True，而是把索引清空成空字串，
-    # 並把索引欄位本身也一起 pinned，視覺上等同於「隱藏索引」且欄位凍結正常生效。
     df_data = df_data.reset_index(drop=True)
-    df_data.index = [""] * len(df_data)
+    columns = list(df_data.columns)
 
-    def build_link_column():
-        # 不同版本 Streamlit 的「顯示文字」參數名稱不一致：
-        # 新版是 display_text，舊版可能是 text，更舊的版本兩者都不支援。
-        # 依序嘗試，全部失敗才退回沒有自訂顯示文字的陽春版本。
-        for kwargs in ({"display_text": "📈 查看"}, {"text": "📈 查看"}, {}):
-            try:
-                return st.column_config.LinkColumn("K線連結", **kwargs)
-            except TypeError:
-                continue
-        return st.column_config.LinkColumn("K線連結")
+    def col_class(col):
+        if col == "代號":
+            return "pin1"
+        if col == "名稱":
+            return "pin2"
+        return ""
 
-    def build_column_config(with_pin: bool):
-        pin_kwargs = {"pinned": True} if with_pin else {}
-        config = {
-            "_index": st.column_config.Column("", width="small", **pin_kwargs),
-            "代號": st.column_config.TextColumn("代號", width="small", **pin_kwargs),
-            "名稱": st.column_config.TextColumn("名稱", width="medium", **pin_kwargs),
-            "今日漲幅%": st.column_config.NumberColumn("今日漲幅%", format="%.2f %%"),
-            "股價": st.column_config.NumberColumn("股價", format="%.2f"),
-            "回檔%": st.column_config.NumberColumn("回檔%", format="%.2f %%"),
-            "集中度%": st.column_config.NumberColumn("集中度%", format="%.2f %%"),
-            "成交額(億)": st.column_config.NumberColumn("成交額(億)", format="%.2f 億"),
-            "K線連結": build_link_column()
-        }
-        return config
+    header_html = "".join(
+        f'<th class="{col_class(col)}">{_html_lib.escape(str(col))}</th>' for col in columns
+    )
 
-    try:
-        column_config = build_column_config(with_pin=True)
-        st.dataframe(
-            df_data,
-            height=height,
-            use_container_width=True,
-            column_config=column_config,
-            hide_index=False
-        )
-    except Exception:
-        if not st.session_state.get("_pin_warned", False):
-            st.sidebar.warning("⚠️ 目前 Streamlit 版本不支援欄位凍結(pinned)，已自動改為一般表格顯示。建議升級 streamlit>=1.36。")
-            st.session_state["_pin_warned"] = True
-        try:
-            column_config = build_column_config(with_pin=False)
-            st.dataframe(
-                df_data,
-                height=height,
-                use_container_width=True,
-                column_config=column_config,
-                hide_index=True
-            )
-        except Exception:
-            # 最終保底：連 column_config 都失敗時，至少確保表格本身能正常顯示
-            st.dataframe(df_data, height=height, use_container_width=True, hide_index=True)
+    body_rows = []
+    for _, row in df_data.iterrows():
+        cells = []
+        for col in columns:
+            cls = col_class(col)
+            if col == "K線連結":
+                url = _html_lib.escape(str(row[col]))
+                cell_html = f'<a href="{url}" target="_blank">📈 查看</a>'
+            else:
+                cell_html = _html_lib.escape(_format_cell(col, row[col]))
+            cells.append(f'<td class="{cls}">{cell_html}</td>')
+        body_rows.append(f"<tr>{''.join(cells)}</tr>")
+
+    table_html = f"""
+    {_FROZEN_TABLE_CSS}
+    <div class="frozen-table-wrap" style="max-height:{height}px;">
+        <table class="frozen-table">
+            <thead><tr>{header_html}</tr></thead>
+            <tbody>{''.join(body_rows)}</tbody>
+        </table>
+    </div>
+    """
+    st.markdown(table_html, unsafe_allow_html=True)
 
 # ==========================================
 # 6. 主程式執行流
