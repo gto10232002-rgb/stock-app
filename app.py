@@ -384,6 +384,7 @@ _FROZEN_TABLE_CSS = """
     border-bottom: 1px solid #eee;
     white-space: nowrap;
     text-align: center;
+    box-sizing: border-box;
 }
 .frozen-table thead th {
     position: sticky;
@@ -395,11 +396,21 @@ _FROZEN_TABLE_CSS = """
     position: sticky;
     left: 0;
     background: #ffffff;
+    width: 72px;
+    min-width: 72px;
+    max-width: 72px;
+    overflow: hidden;
+    text-overflow: ellipsis;
 }
 .frozen-table td.pin2, .frozen-table th.pin2 {
     position: sticky;
-    left: 64px;
+    left: 72px;
     background: #ffffff;
+    width: 130px;
+    min-width: 130px;
+    max-width: 130px;
+    overflow: hidden;
+    text-overflow: ellipsis;
 }
 .frozen-table thead th.pin1, .frozen-table thead th.pin2 {
     background: #f0f2f6;
